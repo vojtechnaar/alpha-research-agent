@@ -1,22 +1,56 @@
 # Alpha Research Agent
 
-Quantitative crypto research project.
+An LLM (Qwen3-8B, improved with LoRA) proposes crypto trading strategies. A CUDA C++ backtester evaluates them, and the results feed back into the LLM.
 
-## Data Pipeline
+```
+data (CCXT) ──> OHLCV Parquet ──┐
+                                ▼
+ Qwen3-8B (+LoRA) ──> strategy spec (JSON) ──> backtest (CUDA, Python reference) ──> metrics
+        ▲                                                                              │
+        └──────── train results as feedback; good train+validation specs → LoRA data ───┘
+```
 
-`src/data/download.py` downloads historical OHLCV candles from a public exchange via [CCXT](https://github.com/ccxt/ccxt) (no API keys needed) and saves one Parquet file per symbol to `data/raw/` (git-ignored).
+| Path | What it does |
+|---|---|
+| `src/data/download.py` | Downloads hourly OHLCV candles to `data/raw/` (config: `configs/data.yaml`) |
+| `src/strategy/dsl.py` | Strategy spec language: validation, Python evaluation, compilation for CUDA |
+| `src/backtest/` | Python reference engine, metrics, and `Evaluator` (Python or CUDA backend) |
+| `cuda/backtest.cu` | CUDA batch backtester, one thread block per strategy |
+| `src/agents/` | Agent loop, prompts, holdout report (config: `configs/agent.yaml`) |
+| `src/models/` | Qwen generation, LoRA dataset building and training |
 
-Settings (exchange, symbols, timeframe, start/end dates, output directory) live in `configs/data.yaml`. Any of them can be overridden with CLI flags (`--exchange`, `--symbols`, `--timeframe`, `--start`, `--end`, `--output-dir`, `--limit`).
+## Strategy specs
+
+The LLM writes JSON like this:
+
+```json
+{"name": "weekly_trend",
+ "hypothesis": "BTC trends over one week",
+ "signal": {"op": "pct_change", "arg": {"op": "field", "name": "close"}, "periods": 168}}
+```
+
+The position each hour is the sign of `signal`. The engine applies it one bar later, and costs are charged per unit of position change. Operators only look backwards, so a valid spec can't use future data. The full operator list and exact semantics are in `src/strategy/dsl.py`.
+
+## Splits
+
+Defined in `configs/agent.yaml`:
+- **Train (2017–2022):** the agent sees these results.
+- **Validation (2023–2024):** logged, and used to pick strategies and LoRA data. Never shown to the LLM.
+- **Test (2025 onwards):** final holdout. Check it rarely.
+
+## Running on the GPU server
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                                   # offline unit tests, no network
-
-# Small smoke test: one symbol, one day
-python -m src.data.download --symbols BTC/USD --start 2024-01-01 --end 2024-01-02
-
-# Full download from configs/data.yaml (run on the server, not locally)
-python -m src.data.download
+python -m src.data.download                        # 1. data
+make -C cuda && python -m pytest                   # 2. build CUDA engine; tests include CUDA-vs-Python parity
+python -m src.models.llm                           # 3. LLM smoke test
+python -m src.agents.loop --backend cuda           # 4. agent run -> results/<run>/
+python -m src.agents.report results/<run> --split validation
+python -m src.models.sft_data results/*/ --out results/sft.jsonl       # 5. LoRA data
+python -m src.models.train_lora --data results/sft.jsonl --output checkpoints/lora/v1
+python -m src.agents.loop --backend cuda --adapter checkpoints/lora/v1  # 6. agent with LoRA
+python -m src.agents.report results/<run> --split test                 # final holdout
 ```
 
-Output: `data/raw/<exchange>_<BASE-QUOTE>_<timeframe>.parquet` (e.g. `bitstamp_BTC-USD_1h.parquet`) with columns `timestamp` (UTC), `open`, `high`, `low`, `close`, `volume`, `symbol`. Only fully closed candles in `[start, end)` are kept. Re-running overwrites the file.
+Without a GPU, `make -C cuda cpu` builds the same backtester for the CPU, so the parity tests can run anywhere.

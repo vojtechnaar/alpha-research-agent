@@ -1,0 +1,35 @@
+# Settings for the research agent (src/agents/loop.py), reports and LoRA data selection.
+data:
+  files:
+    - data/raw/bitstamp_BTC-USD_1h.parquet
+    - data/raw/bitstamp_ETH-USD_1h.parquet
+
+# [start, end) in UTC. The agent only ever sees train results. Validation is logged for model
+# selection and LoRA data; test is the final holdout - look at it rarely.
+splits:
+  train: ["2017-01-01", "2023-01-01"]
+  validation: ["2023-01-01", "2025-01-01"]
+  test: ["2025-01-01", null]
+
+backtest:
+  backend: python             # python | cuda (cuda needs `make -C cuda` first)
+  cuda_binary: cuda/build/backtest
+  cost_bps: 10                # per unit of position change
+  periods_per_year: 8760      # hourly, 24/7
+
+model:
+  model_id: Qwen/Qwen3-8B
+  adapter_path: null          # LoRA adapter directory, e.g. checkpoints/lora/v1
+  enable_thinking: false
+  max_new_tokens: 1024
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+
+agent:
+  iterations: 25
+  candidates_per_iteration: 4 # specs sampled per LLM call, backtested as one batch
+  min_trades: 20              # per asset on train; fewer -> not scored
+  history_best: 5             # best past strategies shown to the LLM
+  history_recent: 5           # most recent attempts (incl. errors) shown to the LLM
+  output_dir: results

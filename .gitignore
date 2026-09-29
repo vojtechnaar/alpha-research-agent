@@ -34,3 +34,10 @@ checkpoints/
 
 # OS
 .DS_Store
+
+# Agent run logs and LoRA datasets (keep the folder)
+/results/*
+!/results/.gitkeep
+
+# CUDA build output
+/cuda/build/

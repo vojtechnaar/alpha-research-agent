@@ -1,4 +1,4 @@
-"""Unit tests for the backtest engine, metrics and baseline strategy (small synthetic data only)."""
+"""Unit tests for the backtest engine and metrics (small synthetic data only)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from src.backtest.metrics import (
     max_drawdown,
     sharpe_ratio,
 )
-from src.backtest.strategies import momentum_signal
 
 
 def make_data(closes: list[float]) -> pd.DataFrame:
@@ -119,16 +118,6 @@ def test_compute_metrics_counts_trades_and_turnover() -> None:
     assert metrics["n_trades"] == 3  # enter long, flip short, exit
     assert metrics["turnover"] == 4.0
     assert set(metrics) >= {"cumulative_return", "sharpe", "annualized_volatility", "max_drawdown"}
-
-
-def test_momentum_signal() -> None:
-    rising = make_data(list(np.linspace(100, 200, 30)))
-    signal = momentum_signal(rising)
-    assert signal.iloc[:24].isna().all()  # warm-up
-    assert (signal.iloc[24:] == 1).all()
-
-    falling = make_data(list(np.linspace(200, 100, 30)))
-    assert (momentum_signal(falling).iloc[24:] == -1).all()
 
 
 def test_rejects_misaligned_or_unsorted_input() -> None:
