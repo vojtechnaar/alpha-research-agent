@@ -1,14 +1,17 @@
-"""Qwen3 chat generation on a CUDA GPU, optionally with a LoRA adapter.
+"""Qwen3 chat generation on one explicitly selected CUDA GPU.
 
 Smoke test (on the GPU server):
     python -m src.models.llm "Propose one testable hypothesis for BTC hourly returns."
+
+The whole model goes on `device` (default cuda:0); Qwen3-8B in bf16 (~16 GB) fits on one A6000.
+Pick another GPU with QWEN_DEVICE=cuda:2 or CUDA_VISIBLE_DEVICES.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import time
-from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -41,7 +44,7 @@ class QwenGenerator:
     def __init__(
         self,
         model_id: str = "Qwen/Qwen3-8B",
-        adapter_path: str | Path | None = None,
+        device: str | None = None,
         enable_thinking: bool = False,
         max_new_tokens: int = 1024,
         temperature: float = 0.7,
@@ -51,18 +54,14 @@ class QwenGenerator:
         require_cuda()
         start = time.perf_counter()
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, device_map="auto")
-        if adapter_path:
-            from peft import PeftModel
-
-            self.model = PeftModel.from_pretrained(self.model, str(adapter_path))
+        device = device or os.environ.get("QWEN_DEVICE", "cuda:0")
+        self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, device_map={"": device})
         self.model.eval()
         self.enable_thinking = enable_thinking
         self.generation_kwargs = dict(
             max_new_tokens=max_new_tokens, do_sample=True, temperature=temperature, top_p=top_p, top_k=top_k
         )
-        print(f"Loaded {model_id}{f' + {adapter_path}' if adapter_path else ''} in "
-              f"{time.perf_counter() - start:.0f}s ({gpu_memory()})")
+        print(f"Loaded {model_id} on {device} in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
 
     def generate(self, messages: list[dict[str, str]], n: int = 1) -> list[str]:
         """Sample `n` independent assistant replies to the chat `messages`."""

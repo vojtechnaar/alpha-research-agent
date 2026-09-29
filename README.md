@@ -1,56 +1,44 @@
 # Alpha Research Agent
 
-An LLM (Qwen3-8B, improved with LoRA) proposes crypto trading strategies. A CUDA C++ backtester evaluates them, and the results feed back into the LLM.
+An automated quantitative crypto research system. Qwen3-8B (with LoRA later) will act as the researcher: it proposes hypotheses as validated JSON strategy specs plus parameter ranges. A numerical engine runs the backtests, in Python now and CUDA later, and sweeps each hypothesis over many parameter combinations.
 
-```
-data (CCXT) ──> OHLCV Parquet ──┐
-                                ▼
- Qwen3-8B (+LoRA) ──> strategy spec (JSON) ──> backtest (CUDA, Python reference) ──> metrics
-        ▲                                                                              │
-        └──────── train results as feedback; good train+validation specs → LoRA data ───┘
-```
+- [docs/architecture.md](docs/architecture.md): the full pipeline and design decisions.
+- [docs/strategy_engine.md](docs/strategy_engine.md): the spec format, features, operators, sweeps, and how they map to CUDA.
+
+**Current milestone:** data, StrategySpec, feature and operator registries, evaluator, parameter sweeps and backtester. The LLM loop, LoRA training and CUDA kernels come in later milestones.
 
 | Path | What it does |
 |---|---|
 | `src/data/download.py` | Downloads hourly OHLCV candles to `data/raw/` (config: `configs/data.yaml`) |
-| `src/strategy/dsl.py` | Strategy spec language: validation, Python evaluation, compilation for CUDA |
-| `src/backtest/` | Python reference engine, metrics, and `Evaluator` (Python or CUDA backend) |
-| `cuda/backtest.cu` | CUDA batch backtester, one thread block per strategy |
-| `src/agents/` | Agent loop, prompts, holdout report (config: `configs/agent.yaml`) |
-| `src/models/` | Qwen generation, LoRA dataset building and training |
+| `src/strategies/` | StrategySpec schema, feature and operator registries, evaluator, sweeps, CLI |
+| `src/backtest/` | Backtest engine (execution lag, costs) and metrics |
+| `src/models/llm.py` | Qwen3-8B inference on one chosen GPU |
+| `configs/strategies/`, `configs/sweeps/` | Example strategies and parameter spaces (JSON) |
 
-## Strategy specs
-
-The LLM writes JSON like this:
-
-```json
-{"name": "weekly_trend",
- "hypothesis": "BTC trends over one week",
- "signal": {"op": "pct_change", "arg": {"op": "field", "name": "close"}, "periods": 168}}
-```
-
-The position each hour is the sign of `signal`. The engine applies it one bar later, and costs are charged per unit of position change. Operators only look backwards, so a valid spec can't use future data. The full operator list and exact semantics are in `src/strategy/dsl.py`.
-
-## Splits
-
-Defined in `configs/agent.yaml`:
-- **Train (2017–2022):** the agent sees these results.
-- **Validation (2023–2024):** logged, and used to pick strategies and LoRA data. Never shown to the LLM.
-- **Test (2025 onwards):** final holdout. Check it rarely.
-
-## Running on the GPU server
+## Data Pipeline
 
 ```bash
 pip install -r requirements.txt
-python -m src.data.download                        # 1. data
-make -C cuda && python -m pytest                   # 2. build CUDA engine; tests include CUDA-vs-Python parity
-python -m src.models.llm                           # 3. LLM smoke test
-python -m src.agents.loop --backend cuda           # 4. agent run -> results/<run>/
-python -m src.agents.report results/<run> --split validation
-python -m src.models.sft_data results/*/ --out results/sft.jsonl       # 5. LoRA data
-python -m src.models.train_lora --data results/sft.jsonl --output checkpoints/lora/v1
-python -m src.agents.loop --backend cuda --adapter checkpoints/lora/v1  # 6. agent with LoRA
-python -m src.agents.report results/<run> --split test                 # final holdout
+python -m src.data.download --symbols BTC/USD --start 2024-01-01 --end 2024-01-02   # small smoke test
+python -m src.data.download                                                          # full history (server)
 ```
 
-Without a GPU, `make -C cuda cpu` builds the same backtester for the CPU, so the parity tests can run anywhere.
+Output: `data/raw/<exchange>_<BASE-QUOTE>_<timeframe>.parquet` with columns `timestamp` (UTC), `open`, `high`, `low`, `close`, `volume`, `symbol`.
+
+## Strategy engine
+
+```bash
+python -m pytest                                              # offline tests, no network/GPU
+
+# One strategy on one period
+python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
+    --data data/raw/bitstamp_BTC-USD_1h.parquet --start 2023-01-01 --end 2024-01-01
+
+# Parameter sweep (300 candidates); table saved to results/sweeps/
+python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
+    --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility.json \
+    --start 2017-01-01 --end 2023-01-01
+
+# LLM smoke test (GPU server; QWEN_DEVICE=cuda:N picks the GPU)
+python -m src.models.llm
+```

@@ -1,0 +1,11 @@
+{
+  "name": "volume_momentum",
+  "description": "Long when price is rising on volume well above its recent average; otherwise flat.",
+  "conditions": [
+    {"id": "momentum", "feature": "momentum", "field": "close", "lookback": 12, "operator": ">", "threshold": 0.01},
+    {"id": "volume", "feature": "volume_change", "field": "volume", "lookback": 24, "operator": ">", "threshold": 0.5}
+  ],
+  "logic": "AND",
+  "true_position": 1,
+  "false_position": 0
+}

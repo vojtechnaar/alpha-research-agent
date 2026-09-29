@@ -13,6 +13,14 @@ def cumulative_return(returns: pd.Series) -> float:
     return float((1 + returns.fillna(0.0)).prod() - 1)
 
 
+def annualized_return(returns: pd.Series, periods_per_year: float = HOURS_PER_YEAR) -> float:
+    """Geometric average return per year (CAGR) implied by the compounded return."""
+    if len(returns) == 0:
+        return float("nan")
+    growth = 1 + cumulative_return(returns)
+    return float(growth ** (periods_per_year / len(returns)) - 1) if growth > 0 else -1.0
+
+
 def annualized_volatility(returns: pd.Series, periods_per_year: float = HOURS_PER_YEAR) -> float:
     """Sample standard deviation of per-period returns, scaled to one year."""
     return float(returns.std(ddof=1) * np.sqrt(periods_per_year))
@@ -40,17 +48,22 @@ def compute_metrics(result: pd.DataFrame, periods_per_year: float = HOURS_PER_YE
     """Summary statistics for a run_backtest result.
 
     turnover is the total absolute position change (a long -> short flip counts 2);
-    n_trades counts bars where the position changed (a flip counts 1).
+    n_trades counts bars where the position changed (a flip counts 1); exposure is the share of
+    bars with a non-zero position. All metrics are asset-agnostic; only periods_per_year depends
+    on the bar frequency (default: hourly bars, trading 24/7).
     """
     returns = result["strategy_return"]
     turnover = result["turnover"]
     years = len(result) / periods_per_year
     return {
         "cumulative_return": cumulative_return(returns),
+        "annualized_return": annualized_return(returns, periods_per_year),
         "sharpe": sharpe_ratio(returns, periods_per_year),
         "annualized_volatility": annualized_volatility(returns, periods_per_year),
         "max_drawdown": max_drawdown(returns),
         "turnover": float(turnover.sum()),
         "annual_turnover": float(turnover.sum() / years) if years else float("nan"),
         "n_trades": int((turnover > 0).sum()),
+        "exposure": float((result["held_position"] != 0).mean()) if len(result) else float("nan"),
+        "n_bars": int(len(result)),
     }

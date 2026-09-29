@@ -1,0 +1,11 @@
+{
+  "name": "momentum_low_volatility",
+  "description": "Long when 24h momentum is strong and hourly volatility is calm; otherwise flat.",
+  "conditions": [
+    {"id": "momentum", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.02},
+    {"id": "volatility", "feature": "volatility", "field": "close", "lookback": 12, "operator": "<", "threshold": 0.03}
+  ],
+  "logic": "AND",
+  "true_position": 1,
+  "false_position": 0
+}

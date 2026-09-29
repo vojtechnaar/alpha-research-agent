@@ -126,3 +126,12 @@ def test_rejects_misaligned_or_unsorted_input() -> None:
         run_backtest(data, pd.Series([1, 1, 1], index=[5, 6, 7]))
     with pytest.raises(ValueError, match="sorted"):
         run_backtest(data.iloc[::-1].reset_index(drop=True), pd.Series([1, 1, 1]))
+
+
+def test_annualized_return_and_exposure() -> None:
+    from src.backtest.metrics import annualized_return
+
+    assert annualized_return(pd.Series([0.1, 0.1]), periods_per_year=2) == pytest.approx(0.21)
+    data = make_data([100, 101, 102, 103])
+    metrics = compute_metrics(run_backtest(data, pd.Series([1, 1, 0, 0]), cost_bps=0))
+    assert metrics["exposure"] == pytest.approx(0.5) and metrics["n_bars"] == 4
