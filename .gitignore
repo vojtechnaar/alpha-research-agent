@@ -1,13 +1,36 @@
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Environments
+.venv/
+venv/
+
+# Secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
 
-data/
-models/
+# Data (root-level only, so src/data/ stays tracked)
+/data/
+*.parquet
+
+# Model weights and checkpoints (root-level only, so src/models/ stays tracked)
+/models/
 checkpoints/
-
 *.pt
 *.pth
 *.bin
+*.ckpt
+*.safetensors
+*.onnx
 
+# OS
 .DS_Store

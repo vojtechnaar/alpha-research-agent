@@ -1,0 +1,11 @@
+# Market-data download settings for src/data/download.py (CLI flags override these).
+exchange: bitstamp        # any CCXT exchange id with public OHLCV
+symbols:
+  - BTC/USD
+  - ETH/USD
+timeframe: 1h
+start: "2017-01-01"       # UTC, inclusive
+end: null                 # UTC, exclusive; null = now
+output_dir: data/raw      # relative to the repo root
+limit: null               # candles per request; null = exchange maximum
+max_retries: 5
