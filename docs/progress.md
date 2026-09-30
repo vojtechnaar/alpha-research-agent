@@ -14,6 +14,59 @@ Working end to end on DeepDish4:
 
 Not built yet: LoRA fine-tuning, formal significance tests (PSR/DSR, bootstrap), walk-forward and cross-asset evaluation.
 
+## How the project developed (summary)
+
+**1. Data and a correct backtester**
+- Downloaded hourly BTC/ETH candles (2017 to now) from Bitstamp through CCXT and stored them as Parquet.
+- Built a backtester with a one-bar execution lag (no look-ahead) and costs charged on every position change.
+- First lesson: at hourly frequency, trading costs decide almost everything. The 24h momentum baseline went from +470% (BTC, zero costs) to about -100% with 10 bps costs.
+
+**2. From a prototype to a safe, explainable strategy format**
+- The first prototype had the LLM write one expression-tree strategy per call. It worked, but it spent one slow LLM call per backtest.
+- It was replaced by a `StrategySpec` built only from a registry of 9 trusted, parameterised features and fixed operators. The LLM writes JSON; nothing it writes is ever executed.
+- The LLM now proposes a *hypothesis plus a parameter space*, and the engine generates and tests every combination. One LLM call becomes hundreds or thousands of backtests.
+
+**3. Scientific guard rails**
+- **Train/validation split:** parameters are chosen on 2017–2022, frozen, then retested on 2023–2024. Data from 2025 onwards is never loaded; it's reserved as the final test.
+- **Benchmarks** (buy-and-hold, cash, naive momentum) run on exactly the same periods and costs.
+- **Warnings** flag multiple testing, parameters at the edge of the grid, parameters with no effect, train → validation degradation, and cost drag.
+- **Experiment records** in JSONL keep every proposal, including rejected ones, with its results. That's the future LoRA training data.
+
+**4. A controlled LLM research loop**
+- Qwen3-8B runs on one chosen GPU. Every proposal is validated first; invalid ones get a bounded number of repair attempts.
+- The loop is capped by `--hypotheses` and stops early after repeated rejections, so it can never run away.
+- The feedback to Qwen is a compact summary of about 700 tokens (results, costs, sensitivity, exploration coverage), never raw data.
+
+**5. CUDA: backtesting stopped being the bottleneck**
+- One C++/CUDA source file runs the same evaluation as the Python engine, parity-tested to 1e-12 with 0 trade mismatches.
+- Speed on 5,600 strategies over 52k hourly bars:
+
+  | Backend | Full sweep | vs Python |
+  |---|---|---|
+  | Python | ~160 s | 1× |
+  | C++, 32 threads | 0.98 s | 163× |
+  | CUDA, RTX A6000 | 0.25 s | **635×** |
+
+- **The bottleneck is now the LLM.** Qwen3-8B generates about 10 tokens/s, so one proposal takes 20–30 s. Testing 20,000 parameter combinations for that proposal takes about 1 s on the GPU. Over 95% of each iteration is spent waiting for the LLM.
+- This changes the research design:
+  - Each LLM call should buy as much evidence as possible, which means wide parameter grids of thousands of combinations instead of 27.
+  - Further speed-ups must come from better proposals (fewer invalid or duplicate replies, more diverse ideas), not faster backtests.
+
+**6. Using the runs to improve the researcher**
+- Each real run exposed a failure, and each was fixed and re-checked:
+  - Qwen copied the prompt example.
+  - It re-sent renamed duplicates.
+  - It proposed high-churn ideas it couldn't see were failing on costs.
+  - It gave `returns` a lookback.
+  - It repeated duplicates and used tiny searches.
+- The fixes:
+  - a format-only prompt example
+  - duplicate detection that ignores names and order
+  - COSTS lines in the feedback
+  - error messages that say how to repair the proposal
+  - budget-scaled search guidance and an EXPLORATION block
+- What's left is mostly the 8B model's research judgement. That's the motivation for LoRA fine-tuning on the collected experiment records.
+
 ---
 
 ## 2026-09-30: Research-quality fixes after the first CUDA runs
