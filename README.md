@@ -29,6 +29,7 @@ pip install -r requirements.txt
 python -m pytest                                   # offline tests: no network, no GPU, no market data
 
 python -m src.data.download                        # hourly BTC/ETH history -> data/raw/ (server)
+python -m src.data.download_yahoo                  # daily SPY, QQQ, TLT, GLD, EURUSD -> data/raw/yahoo_*_1d.parquet
 
 # Train sweep -> top 10 frozen -> validation retest -> benchmarks -> experiment record
 python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
@@ -50,12 +51,13 @@ python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypo
 python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypotheses 1 \
     --replay configs/proposals/example_momentum_low_volatility.json
 
-python -m src.research.report results/experiments/<run_id>/experiments.jsonl   # review a run
+python -m src.research.report data/research_runs/<run_id>/experiments.jsonl   # review a run
+python -m src.research.runs                                                    # metrics of all saved runs
 
 # Confirm chosen experiments without the LLM: on another asset, then ONCE on the final test (2025+)
-python -m src.research.confirm results/experiments/<run_id>/experiments.jsonl --experiments 3 6 \
+python -m src.research.confirm data/research_runs/<run_id>/experiments.jsonl --experiments 3 6 \
     --data data/raw/bitstamp_ETH-USD_1h.parquet --backend cuda
-python -m src.research.confirm results/experiments/<run_id>/experiments.jsonl --experiments 3 6 --final-test --backend cuda
+python -m src.research.confirm data/research_runs/<run_id>/experiments.jsonl --experiments 3 6 --final-test --backend cuda
 ```
 
 Data after `--validation-end` (default 2025-01-01) is never loaded by experiments. It's reserved as the final test.

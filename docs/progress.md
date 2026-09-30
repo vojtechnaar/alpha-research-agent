@@ -68,6 +68,14 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → The wording is now asset-neutral. The market and bar length come from the data, typical values from the training period, and `--periods-per-year` sets the annualisation for other markets.
 27. **Validation stopped being blind.** Qwen had seen 2023–24 results across many runs, so the best ideas were partly fitted to that period.
     → `python -m src.research.confirm` re-tests chosen experiments without the LLM: *replicate* (the same idea re-selected on another asset), *transfer* (the frozen parameters applied unchanged to another asset), and a one-time *final test* on the untouched 2025+ period. Every final-test use is logged and repeat use triggers a warning.
+28. **Runs repeated each other.** A fixed default seed (42) made every run start with the same proposals, so a new run re-tested yesterday's ideas.
+    → Each run gets a fresh random seed, printed and saved in `run.json`. `--seed N` reproduces a run.
+29. **Buy-and-hold in disguise looked like the best result.** One candidate was long 99.8% of the validation period, so its Sharpe simply equalled buy-and-hold's.
+    → A warning fires when a long-only strategy is in the market at least 90% of the validation period, and the run metrics don't count it as useful.
+30. **Only one market (BTC, hourly).** Ideas tuned on one asset may be luck.
+    → `python -m src.data.download_yahoo` adds daily, split- and dividend-adjusted bars for stocks (SPY, QQQ), bonds (TLT), gold (GLD) and FX (EURUSD) in the same format. The momentum benchmark was renamed `naive_momentum_24` (bars, not hours).
+31. **Research runs were treated as disposable,** but they're the LoRA training data.
+    → Every run is kept in `data/research_runs/` (git-ignored; full train tables only with `--save-sweeps`, to save disk). `python -m src.research.runs` measures every run (efficiency, research quality, diversity, mistakes), which is the baseline a LoRA must beat.
 
 ## Still open
 
@@ -76,3 +84,23 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 - **Qwen's research judgement:** short ideas keep failing in this mostly bull-market sample, but Qwen keeps proposing them. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.
 - **Formal statistics:** Probabilistic/Deflated Sharpe, block bootstrap, multiple-testing corrections.
 - **Cross-asset and walk-forward validation** (discover on BTC, confirm on ETH), and an exposure-matched benchmark.
+
+## Plan: LoRA
+
+1. **Collect research data (now).** Run the loop on several markets: BTC and ETH hourly; SPY, QQQ and TLT daily. Every run is kept in `data/research_runs/`. Target several hundred completed experiments. Keep **ETH and GLD held out**: they are never used for LoRA training, so the comparison below is fair.
+2. **Build the training set.** Pairs of (the context Qwen saw → the proposal it wrote), keeping only good research steps:
+   - valid on the first try
+   - a hypothesis that matches the rule
+   - no unit problems
+   - held up on validation
+   - not buy-and-hold in disguise, not a repeat
+
+   Failed and rejected attempts stay in the records for analysis, and could later be used for preference training.
+3. **Train** a LoRA adapter (PEFT) for Qwen3-8B on one A6000.
+4. **Measure base vs LoRA:**
+   - **Setup:** the same held-out markets (ETH, GLD), the same settings, and the same number of runs with the same seeds for both models (e.g. 5 runs × 10 hypotheses each). Compare runs in pairs by seed.
+   - **Primary metric,** fixed in advance: *useful experiments per 10 LLM calls* (from `python -m src.research.runs`).
+   - **Secondary metrics:** first-try valid rate, LLM calls per completed experiment, rejection codes, unit problems, idea families per run, share holding up on validation, train → validation degradation.
+   - **Decision rule:** LoRA is better if the primary metric improves in most paired runs (e.g. at least 4 of 5) with a bootstrap confidence interval above 0, and no secondary quality metric gets worse.
+   - **Final check:** the best idea from each model is evaluated once on the 2025+ final test.
+   - **Pitfall:** LoRA is trained on examples labelled with validation results, so comparing on the *training* markets' validation period would favour it. That's why the comparison uses held-out markets and the final test.

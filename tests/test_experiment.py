@@ -25,7 +25,7 @@ SPACE = {"mom.lookback": [6, 24, 72], "mom.threshold": [0.0, 0.01]}
 
 def test_benchmarks_load_and_evaluate(data: pd.DataFrame) -> None:
     benchmarks = load_benchmarks()
-    assert {"buy_and_hold", "flat", "naive_momentum_24h"} <= set(benchmarks)
+    assert {"buy_and_hold", "flat", "naive_momentum_24"} <= set(benchmarks)
     table = evaluate_benchmarks(data, benchmarks, Period("2020-02-01", "2020-03-01"), cost_bps=10).set_index("benchmark")
 
     window = data[(data.timestamp >= "2020-02-01") & (data.timestamp < "2020-03-01")]
@@ -230,3 +230,14 @@ def test_rarely_trading_candidates_are_not_selected_and_flagged(data: pd.DataFra
     required = 200.0 * result.train["n_bars"].iloc[0] / 8760
     assert all(trades[i] >= required for i in result.selected)
     assert (trades < required).any()  # some candidates were excluded for trading too rarely
+
+
+def test_near_buy_and_hold_is_flagged(data: pd.DataFrame, settings: ExperimentSettings) -> None:
+    # "long unless the price fell more than 50% in a bar" is buy-and-hold in disguise
+    almost_always = StrategySpec.from_dict({"name": "bh", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": ">", "threshold": -0.5}]})
+    result = run_experiment(data, almost_always, {"r.threshold": [-0.5, -0.4]}, settings, load_benchmarks())
+    assert any("behave almost like buy-and-hold" in w for w in robustness_warnings(result, {}))
+    short = StrategySpec.from_dict({**almost_always.to_dict(), "true_position": -1})
+    result = run_experiment(data, short, {"r.threshold": [-0.5, -0.4]}, settings, load_benchmarks())
+    assert not any("buy-and-hold, so" in w for w in robustness_warnings(result, {}))  # only long-only strategies

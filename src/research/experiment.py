@@ -100,6 +100,7 @@ class ExperimentResult:
     benchmarks: dict[str, pd.DataFrame]  # "train"/"validation" -> one row per benchmark
     timing: dict[str, Any]
     condition_activity: dict[str, Any]   # {"scope": ..., "shares": {condition id: share of train bars true}}
+    strategy: StrategySpec | None = None  # the base strategy (its long/short rule is used by the warnings)
 
 
 def min_trades(n_bars: int | float | pd.Series, min_trades_per_year: float,
@@ -217,4 +218,5 @@ def run_experiment(
             "ms_per_train_candidate": round(1000 * train_seconds / max(len(candidates), 1), 2),
         },
         condition_activity=activity,
+        strategy=base,
     )

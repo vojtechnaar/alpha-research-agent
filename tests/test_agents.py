@@ -185,7 +185,7 @@ def test_loop_stops_after_n_hypotheses(settings: ExperimentSettings, tmp_path: P
     assert len(records) == 3 and len(generator.calls) == 3
     assert [r.status for r in records] == ["completed"] * 3
     assert len(load_records(tmp_path / "experiments.jsonl")) == 3
-    assert all(Path(r.sweep_csv).exists() for r in records)
+    assert all(r.sweep_csv is None for r in records)  # full train tables are only saved on request
     assert generator.seeds == [42, 1042, 2042]
 
 
@@ -434,3 +434,26 @@ def test_format_errors_are_retried_at_the_normal_temperature(settings: Experimen
     generator = FakeGenerator(["not json", json.dumps(PROPOSAL)])
     run(generator, settings, tmp_path, hypotheses=1)
     assert generator.temperatures == [None, None]
+
+
+def test_train_tables_are_saved_only_on_request(settings: ExperimentSettings, tmp_path: Path) -> None:
+    records = run_research(FakeGenerator([variant([6, 24])]), make_hourly_data(), settings, LoopSettings(hypotheses=1),
+                           tmp_path, save_sweeps=True, log=lambda _: None)
+    assert Path(records[0].sweep_csv).exists()
+
+
+def test_cli_uses_a_fresh_random_seed_unless_given(tmp_path: Path) -> None:
+    data_path = tmp_path / "syn.parquet"
+    make_hourly_data().to_parquet(data_path)
+    replay = tmp_path / "p.jsonl"
+    replay.write_text(variant([6, 24]) + "\n")
+    common = ["--data", str(data_path), "--hypotheses", "1", "--replay", str(replay), "--train-start", "2020-01-01",
+              "--train-end", "2020-03-15", "--validation-start", "2020-03-15", "--validation-end", "2020-05-01",
+              "--min-trades-per-year", "1"]
+    seeds = []
+    for i, extra in enumerate(([], [], ["--seed", "7"])):
+        out = tmp_path / f"out{i}"
+        assert main([*common, "--output-dir", str(out), *extra]) == 0
+        (run_dir,) = out.iterdir()
+        seeds.append(json.loads((run_dir / "run.json").read_text())["loop"]["seed"])
+    assert seeds[0] != seeds[1] and seeds[2] == 7

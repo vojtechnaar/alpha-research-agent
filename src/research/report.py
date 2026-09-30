@@ -1,6 +1,6 @@
 """Human-readable reports from experiment records (fresh or loaded from JSONL).
 
-    python -m src.research.report results/experiments/<run_id>/experiments.jsonl
+    python -m src.research.report data/research_runs/<run_id>/experiments.jsonl
 """
 
 from __future__ import annotations

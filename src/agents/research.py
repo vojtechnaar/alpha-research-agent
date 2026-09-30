@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import subprocess
 import sys
 import time
@@ -53,7 +54,8 @@ from src.strategies.schema import (
 from src.strategies.sweep import CandidateEvaluator, evaluate_candidates
 
 MAX_HYPOTHESES = 100  # guard against typos like --hypotheses 5000
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "experiments"
+# Every run is kept here: the research history is the training data for LoRA (git-ignored via /data/).
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "research_runs"
 
 
 class Generator(Protocol):
@@ -152,10 +154,13 @@ def run_research(
     evaluator: CandidateEvaluator = evaluate_candidates,
     log: Callable[[str], None] = print,
     system: str | None = None,
+    save_sweeps: bool = False,
 ) -> list[ExperimentRecord]:
     """Run at most `loop.hypotheses` research iterations; returns their records (also saved as JSONL).
 
     `system` defaults to build_system_prompt(data, settings) (rules, primitives, train feature ranges).
+    With `save_sweeps`, the full per-candidate train table of every experiment is also written as a
+    CSV (several MB each); records alone are enough for analysis and LoRA data.
     """
     system = system or build_system_prompt(data, settings)
     records: list[ExperimentRecord] = []
@@ -193,10 +198,11 @@ def run_research(
                 result = run_experiment(data, proposal.strategy, proposal.parameter_space, settings,
                                         benchmarks, dataset, evaluator)
                 add_results(record, result, proposal.parameter_space)
-                csv_path = run_dir / "sweeps" / f"{record.experiment_id}_train.csv"
-                csv_path.parent.mkdir(parents=True, exist_ok=True)
-                result.train.to_csv(csv_path, index=False)
-                record.sweep_csv = str(csv_path)
+                if save_sweeps:
+                    csv_path = run_dir / "sweeps" / f"{record.experiment_id}_train.csv"
+                    csv_path.parent.mkdir(parents=True, exist_ok=True)
+                    result.train.to_csv(csv_path, index=False)
+                    record.sweep_csv = str(csv_path)
                 for identity in candidate_identities(proposal):
                     tested.setdefault(identity, label)
                 families.setdefault(proposal.strategy.family(), []).append(f"experiment {iteration + 1}")
@@ -284,14 +290,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=0.7, help="0 = greedy decoding")
     p.add_argument("--top-p", type=float, default=0.8)
     p.add_argument("--top-k", type=int, default=20)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, help="LLM sampling seed (default: a new random seed per run, "
+                                              "printed and saved in run.json so the run can be reproduced)")
     p.add_argument("--replay", type=Path, help="use proposals from a .json/.jsonl file instead of Qwen")
-    p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="where runs are kept")
+    p.add_argument("--save-sweeps", action="store_true", help="also save each experiment's full train table (CSV)")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    # A fixed default seed made every run start with the same proposals; a fresh one per run explores more.
+    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1, 1_000_000)
     try:
         settings = ExperimentSettings(
             train=Period(args.train_start, args.train_end),
@@ -301,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
             periods_per_year=args.periods_per_year,
         )
         loop = LoopSettings(args.hypotheses, args.max_proposal_retries, args.max_consecutive_rejections,
-                            args.recent, not args.no_validation_feedback, args.seed, args.max_per_family)
+                            args.recent, not args.no_validation_feedback, seed, args.max_per_family)
     except ValueError as exc:
         print(f"Invalid settings: {exc}", file=sys.stderr)
         return 2
@@ -339,10 +349,11 @@ def main(argv: list[str] | None = None) -> int:
         "system_prompt": system,
     }, indent=2))
     print(f"Run {run_id}: at most {loop.hypotheses} hypotheses, <= {settings.max_candidates} candidates each, "
-          f"cost {settings.transaction_cost:g}. Records: {run_dir / 'experiments.jsonl'}")
+          f"cost {settings.transaction_cost:g}, seed {seed} (reproduce with --seed {seed}). "
+          f"Records: {run_dir / 'experiments.jsonl'}")
 
     records = run_research(generator, data, settings, loop, run_dir, benchmarks, dataset, str(args.data), run_id,
-                           evaluator=evaluator, system=system)
+                           evaluator=evaluator, system=system, save_sweeps=args.save_sweeps)
     print(f"\nDone: {len(records)} iterations "
           f"({sum(r.status == 'completed' for r in records)} completed, "
           f"{sum(r.status == 'rejected' for r in records)} rejected, {sum(r.status == 'failed' for r in records)} failed).")

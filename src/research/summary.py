@@ -14,6 +14,7 @@ from src.research.experiment import TRADE_SIGNATURE, ExperimentResult, min_trade
 from src.strategies.sweep import summarize_sweep
 
 COST_WARNING_ANNUAL_COST = 0.05  # warn when fees exceed 5% of capital per year
+NEAR_BUY_AND_HOLD_EXPOSURE = 0.9  # a long-only strategy in the market this often is ~buy-and-hold
 
 BENCHMARK_METRICS = ("cumulative_return", "annualized_return", "sharpe", "annualized_volatility",
                      "max_drawdown", "turnover", "n_trades", "exposure", "n_bars")
@@ -154,6 +155,14 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
     if few:
         warnings.append(f"{few} of {len(table)} retested candidates traded less than {s.min_trades_per_year:g} times "
                         f"per year on validation (< {required:.0f} trades); their validation metrics are unreliable.")
+
+    spec = result.strategy
+    long_only = spec is not None and -1 not in (spec.true_position, spec.false_position) \
+        and 1 in (spec.true_position, spec.false_position)
+    exposure = _median(table["validation_exposure"])
+    if long_only and exposure is not None and exposure >= NEAR_BUY_AND_HOLD_EXPOSURE:
+        warnings.append(f"The retested candidates are long {exposure:.0%} of the validation period: they behave "
+                        "almost like buy-and-hold, so a Sharpe close to buy-and-hold's shows no timing skill.")
 
     bh = _benchmark_metric(result, "validation", "buy_and_hold", metric)
     if bh is not None and table[f"validation_{metric}"].notna().any():

@@ -4,11 +4,11 @@ Qwen sees validation results, so after many runs the validation period is no lon
 checks use data the research loop never showed it:
 
     # cross-asset: does the idea (and do the exact parameters) also work on ETH?
-    python -m src.research.confirm results/experiments/<run>/experiments.jsonl --experiments 3 6 \
+    python -m src.research.confirm data/research_runs/<run>/experiments.jsonl --experiments 3 6 \
         --data data/raw/bitstamp_ETH-USD_1h.parquet --backend cuda
 
     # final test: the frozen top N chosen on train, evaluated ONCE on the untouched period (2025+)
-    python -m src.research.confirm results/experiments/<run>/experiments.jsonl --experiments 3 6 \
+    python -m src.research.confirm data/research_runs/<run>/experiments.jsonl --experiments 3 6 \
         --final-test --backend cuda
 
 Cross-asset reports two things:

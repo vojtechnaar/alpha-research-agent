@@ -101,7 +101,7 @@ So the worst-case LLM cost of a run is `hypotheses × (1 + max_proposal_retries)
 
 `configs/benchmarks/*.json` are ordinary StrategySpecs:
 - **`buy_and_hold`** and **`flat`** have no conditions, so they're always long or always in cash.
-- **`naive_momentum_24h`** is the simplest trend rule.
+- **`naive_momentum_24`** (24-bar momentum) is the simplest trend rule.
 
 They run through the same evaluator, costs and periods as the candidates, and a test checks that their periods match exactly.
 
@@ -112,12 +112,14 @@ A candidate beating buy-and-hold's Sharpe is **not** a conclusion that it has al
 Records are stored per run:
 
 ```
-results/experiments/<run_id>/run.json             settings, loop limits, model + generation settings, seed,
-                                                  git commit, data path, benchmarks, system prompt
-results/experiments/<run_id>/experiments.jsonl    one record per iteration (completed / rejected / failed)
-results/experiments/<run_id>/sweeps/*.csv         full train table per experiment (referenced by path)
-results/experiments/manual/                       records from `python -m src.strategies.run ... --validation-start`
+data/research_runs/<run_id>/run.json             settings, loop limits, model + generation settings, seed,
+                                                 git commit, data path, benchmarks, system prompt
+data/research_runs/<run_id>/experiments.jsonl    one record per iteration (completed / rejected / failed)
+data/research_runs/<run_id>/sweeps/*.csv         full train table per experiment (only with --save-sweeps)
+results/experiments/manual/                      records from `python -m src.strategies.run ... --validation-start`
 ```
+
+Every research run is kept in `data/research_runs/` (git-ignored): this history is the LoRA training data and the baseline for comparing base vs LoRA. `python -m src.research.runs` summarises all runs: efficiency, research quality, diversity and mistakes per run and per model.
 
 A record holds the following, and never any time series (a typical record is a few KB):
 - ids and the timestamp
@@ -202,7 +204,7 @@ The planned experiment compares **base Qwen3-8B** against **Qwen3-8B + quant LoR
 The engine works on any OHLCV bars. The StrategySpec, the features (the `distance_to_*` ones are unit-free), the C++/CUDA backends, the train/validation logic, benchmarks, records and the LLM loop are all market-agnostic. The prompt names the market and bar length from the data, and shows typical feature values computed from the loaded training data.
 
 Per market you need to set:
-- **Data loader:** CCXT is crypto-only; write the same Parquet columns from another source.
+- **Data loader:** CCXT is crypto-only. `python -m src.data.download_yahoo` downloads daily, split- and dividend-adjusted bars for stocks, bonds, gold and FX in the same format (default: SPY, QQQ, TLT, GLD, EURUSD=X since 2005).
 - **`--periods-per-year`:** 8,760 for hourly bars trading 24/7; about 1,640 for hourly stock bars; 252 for daily bars.
 - **`--transaction-cost`:** for that market.
 - **Price adjustments:** split/dividend-adjusted stock prices, or rolled futures contracts.
