@@ -32,6 +32,8 @@ from src.strategies.sweep import (
 )
 
 SELECTION_METRICS = ("sharpe", "annualized_return", "cumulative_return")  # higher is better
+# Candidates with identical values here traded identically (e.g. a filter that never binds).
+TRADE_SIGNATURE = ("n_trades", "turnover", "exposure", "cumulative_return", "sharpe")
 COMPARISON_METRICS = ("sharpe", "annualized_return", "max_drawdown", "n_trades", "exposure", "annual_turnover")
 MAX_TRANSACTION_COST = 0.1
 
@@ -99,13 +101,17 @@ class ExperimentResult:
     timing: dict[str, Any]
 
 
-def select_top(train: pd.DataFrame, metric: str, n: int, min_trades: int = 0) -> list[int]:
+def select_top(train: pd.DataFrame, metric: str, n: int, min_trades: int = 0, distinct: bool = True) -> list[int]:
     """Ids of the `n` best candidates by `metric` on TRAIN; ties go to the lower id.
 
-    Candidates with an undefined metric or fewer than `min_trades` trades are not eligible.
+    Candidates with an undefined metric or fewer than `min_trades` trades are not eligible. With
+    `distinct`, a candidate that traded identically to a better-ranked one is skipped, so the N
+    validation slots go to N different strategies.
     """
     eligible = train[(train["n_trades"] >= min_trades) & train[metric].notna()]
     ranked = eligible.sort_values([metric, "candidate"], ascending=[False, True])
+    if distinct:
+        ranked = ranked.drop_duplicates(subset=[c for c in TRADE_SIGNATURE if c in ranked], keep="first")
     return [int(i) for i in ranked["candidate"].head(n)]
 
 

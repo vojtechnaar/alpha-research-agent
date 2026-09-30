@@ -19,6 +19,16 @@ def signal_to_position(signal: pd.Series) -> pd.Series:
     return np.sign(values).fillna(0.0).astype("float64")
 
 
+def period_returns(close: pd.Series) -> pd.Series:
+    """Simple close-to-close returns; a missing close earns 0 and its move lands on the next valid bar.
+
+    The first bar has no previous close in the period, so its return is 0. Native backends are
+    given exactly these returns, so all engines share one definition.
+    """
+    filled = close.astype("float64").ffill()
+    return (filled / filled.shift(1) - 1).fillna(0.0)
+
+
 def run_backtest(
     data: pd.DataFrame,
     signal: pd.Series | str,
@@ -46,11 +56,10 @@ def run_backtest(
         raise ValueError("signal index must match data index")
 
     close = data["close"].astype("float64")
-    filled = close.ffill()  # a missing close earns 0; the move is captured on the next valid bar
     out = pd.DataFrame(index=data.index)
     out["timestamp"] = data["timestamp"] if "timestamp" in data else data.index
     out["close"] = close
-    out["return"] = (filled / filled.shift(1) - 1).fillna(0.0)
+    out["return"] = period_returns(close)
     out["signal"] = signal
     out["position"] = signal_to_position(signal)
     out["held_position"] = out["position"].shift(1, fill_value=0.0)

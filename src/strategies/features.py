@@ -6,8 +6,8 @@ first bars are NaN (warm-up) and a NaN anywhere in a window makes that window's 
 Divisions by zero and infinities become NaN.
 
 Parameters such as `lookback` are always runtime arguments, never baked into a function. The
-future CUDA engine mirrors FEATURE_REGISTRY one kernel per feature, with the same parameters
-(see docs/strategy_engine.md).
+native C++/CUDA engine (cuda/backtest.cu, feature_value) implements every entry of FEATURE_REGISTRY
+with the same parameters and semantics (see docs/strategy_engine.md).
 """
 
 from __future__ import annotations

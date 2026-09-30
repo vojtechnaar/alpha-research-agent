@@ -17,6 +17,8 @@
 
 Costs: --transaction-cost is a fraction of notional per unit of position change (default 0.001 =
 10 bps). --cost-bps is the same thing in basis points (kept for older commands).
+
+Backend: --backend python (default) | cpp | cuda (see src/backends; build with make -C cuda).
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.backends import BACKENDS, get_evaluator
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, evaluate_benchmarks, load_benchmarks
 from src.research.experiment import SELECTION_METRICS, ExperimentSettings, Period, run_experiment
 from src.research.records import add_results, append_record, new_record
@@ -36,9 +39,9 @@ from src.research.report import format_record
 from src.strategies.schema import SpecError, StrategySpec
 from src.strategies.sweep import (
     DEFAULT_MAX_CANDIDATES,
+    CandidateEvaluator,
     count_candidates,
-    evaluate_candidates,
-    run_sweep,
+    generate_candidates,
     summarize_sweep,
 )
 
@@ -66,6 +69,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     cost.add_argument("--cost-bps", type=float, help="basis points per unit turnover")
     p.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
     p.add_argument("--benchmarks-dir", type=Path, default=DEFAULT_BENCHMARKS_DIR)
+    p.add_argument("--backend", choices=BACKENDS, default="python")
+    p.add_argument("--backtest-device", type=int, help="GPU index for --backend cuda")
     p.add_argument("--out", type=Path, help="CSV path for the (train) sweep table")
     args = p.parse_args(argv)
     for a, b in (("start", "train_start"), ("end", "train_end")):
@@ -89,23 +94,25 @@ def main(argv: list[str] | None = None) -> int:
     data = pd.read_parquet(args.data).sort_values("timestamp").reset_index(drop=True)
     dataset = str(data["symbol"].iloc[0]) if "symbol" in data else args.data.stem
     benchmarks = load_benchmarks(args.benchmarks_dir)
+    evaluator = get_evaluator(args.backend, args.backtest_device)
+    print(f"Backend: {getattr(evaluator, 'info', 'python (pandas reference)')}")
     cost_bps = args.transaction_cost * 10_000
     print(f"{dataset}: transaction cost {args.transaction_cost:g} per unit turnover ({cost_bps:g} bps)"
           + ("  [WARNING: zero costs]" if args.transaction_cost == 0 else ""))
 
     try:
         if space is not None and args.validation_start:
-            return _experiment(args, spec, space, data, dataset, benchmarks)
+            return _experiment(args, spec, space, data, dataset, benchmarks, evaluator)
         if space is not None:
-            return _sweep(args, spec, space, data, dataset, cost_bps)
+            return _sweep(args, spec, space, data, dataset, cost_bps, evaluator)
     except (SpecError, ValueError) as exc:
         print(f"Invalid experiment: {exc}", file=sys.stderr)
         return 1
 
     period = Period(args.start, args.end)
-    table = evaluate_candidates(data, [({}, spec)], cost_bps, start=period.start, end=period.end, dataset=dataset)
+    table = evaluator(data, [({}, spec)], cost_bps, start=period.start, end=period.end, dataset=dataset)
     table.insert(1, "strategy", spec.name)
-    bench = evaluate_benchmarks(data, benchmarks, period, cost_bps=cost_bps, dataset=dataset)
+    bench = evaluate_benchmarks(data, benchmarks, period, evaluator=evaluator, cost_bps=cost_bps, dataset=dataset)
     rows = pd.concat([table, bench.rename(columns={"benchmark": "strategy"})], ignore_index=True)
     print(f"{spec.describe()}\nPeriod {rows['start'].iloc[0]} -> {rows['end'].iloc[0]}\n")
     print(rows.set_index("strategy")[SHOWN_METRICS].T.to_string(float_format="{:,.4f}".format))
@@ -113,10 +120,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _sweep(args: argparse.Namespace, spec: StrategySpec, space: dict, data: pd.DataFrame, dataset: str,
-           cost_bps: float) -> int:
+           cost_bps: float, evaluator: CandidateEvaluator) -> int:
+    candidates = generate_candidates(spec, space, args.max_candidates)
     started = time.perf_counter()
-    results = run_sweep(data, spec, space, cost_bps, start=args.start, end=args.end,
-                        max_candidates=args.max_candidates, dataset=dataset)
+    results = evaluator(data, candidates, cost_bps, start=args.start, end=args.end, dataset=dataset)
     elapsed = time.perf_counter() - started
     out = args.out or PROJECT_ROOT / "results" / "sweeps" / f"{spec.name}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -128,14 +135,14 @@ def _sweep(args: argparse.Namespace, spec: StrategySpec, space: dict, data: pd.D
 
 
 def _experiment(args: argparse.Namespace, spec: StrategySpec, space: dict, data: pd.DataFrame, dataset: str,
-                benchmarks: dict) -> int:
+                benchmarks: dict, evaluator: CandidateEvaluator) -> int:
     settings = ExperimentSettings(
         train=Period(args.start, args.end),
         validation=Period(args.validation_start, args.validation_end),
         transaction_cost=args.transaction_cost, top_n=args.top, selection_metric=args.selection_metric,
         max_candidates=args.max_candidates, min_train_trades=args.min_train_trades,
     )
-    result = run_experiment(data, spec, space, settings, benchmarks, dataset)
+    result = run_experiment(data, spec, space, settings, benchmarks, dataset, evaluator)
     record = new_record(settings, dataset=dataset, data_path=str(args.data), hypothesis=spec.description,
                         strategy_spec=spec.to_dict(), strategy_description=spec.describe(),
                         notes=f"manual experiment: {args.strategy} x {args.space}")

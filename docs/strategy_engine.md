@@ -144,29 +144,48 @@ This prints the report and appends an experiment record to `results/experiments/
 
 `run_experiment`, the benchmarks and the research loop all take `evaluator=`. A C++ or CUDA backend with the same contract plugs in without other changes, and a parity test can run both backends on the same candidates and compare the tables.
 
-## Mapping to the future CUDA engine
+## Native backends (C++ and CUDA)
 
-Each registry entry becomes one kernel with runtime parameters:
+`cuda/backtest.cu` implements the same evaluation natively. It's built two ways:
 
-```
-momentum_kernel(prices, lookback, out)          // compute_momentum
-volatility_kernel(prices, lookback, out)        // compute_volatility
-rolling_mean_kernel(values, lookback, out)      // compute_rolling_mean
-zscore_kernel(values, lookback, out)            // compute_zscore
-...
-compare_kernel(feature, op, threshold, out)     // OPERATOR_REGISTRY
-combine_kernel(conditions, logic, out)          // LOGIC_REGISTRY
-backtest_kernel(positions, returns, cost, out)  // run_backtest + compute_metrics
+```bash
+make -C cuda              # CUDA GPU backend -> cuda/build/libbacktest_cuda.so (A6000: ARCH=sm_86 if -arch=native fails)
+make -C cuda cpu OMP=1    # C++ CPU backend (OpenMP, all cores) -> cuda/build/libbacktest_cpu.so
 ```
 
-There's never a `momentum_24h_kernel`. The lookback is an argument, so one kernel covers every value in the parameter space.
+`src/backends/native.py` loads the library with `ctypes`, so there are no Python build dependencies. `NativeEvaluator` has the `evaluate_candidates` signature, and `get_evaluator("python" | "cpp" | "cuda")` returns the chosen backend.
 
-The planned GPU layout for a sweep:
-1. **Compute each feature buffer once.** There's one per distinct (feature, field, lookback), which is the same set the Python `FeatureCache` holds. For the example space that's 5 momentum + 4 volatility buffers.
-2. **Evaluate candidates in parallel.** Each candidate combines its buffers with its thresholds into positions, then reduces its backtest to a row of metrics. One block or warp per candidate, with time processed in parallel inside it.
-3. **Parallelise across assets and periods too.** They're additional independent dimensions.
-4. **Transfer only the metric table back,** never the per-bar series.
+**Per call** (one dataset, one period):
+1. **Python prepares the inputs.** It compiles the candidate specs into flat arrays: one entry per *distinct* `(feature, field, lookback)`, and per candidate its conditions (buffer index, operator, threshold), logic and positions. It computes the period returns with `period_returns`, the exact function the Python engine uses.
+2. **The feature kernel** computes each feature buffer once over bars `[0, end)`, with one GPU thread per (buffer, bar). Each registry entry is one `case` of `feature_value(feature, series, lookback, t)`. The lookback is a runtime argument: there's never a `momentum_24h_kernel`.
+3. **The candidate kernel** runs one GPU thread per candidate. It combines its buffers with its thresholds into positions and backtests over `[start, end)` in time order. That's the same arithmetic order as pandas, so results match to rounding (about 1e-13). It writes one row of `METRIC_NAMES`.
+4. **Only the metrics table** goes back to Python, never per-bar series.
 
-That's how one hypothesis turns into tens or hundreds of thousands of candidate evaluations on the GPU, while the LLM only reads a summary.
+**Semantics that the native code mirrors on purpose:**
+- NaN/inf handling.
+- Warm-up and NaN-in-window rules.
+- pandas' constant-window behaviour: a window of identical values has mean exactly that value and standard deviation exactly 0, so zscore is undefined.
+- "Undefined condition means flat."
+- The one-bar execution lag.
+- Costs per unit of position change.
+- Two-pass sample variance.
 
-A parity test will run the same candidates through the Python `evaluate_candidates` and the CUDA backend, and require matching metrics within floating-point tolerance, before any CUDA results are trusted.
+**Adding a feature to the registry** also needs a `case` in `feature_value` and an entry in `FEATURE_CODES`. Until then the native backends raise `NotImplementedError` for it, and a test checks the code tables stay in sync.
+
+**Measured so far** (September 2026):
+- **Python:** about 25 ms per candidate on DeepDish, for 52k hourly bars.
+- **C++ single-threaded:** about 40× faster than Python on a laptop, on synthetic data.
+- **CUDA:** measure it on DeepDish with:
+
+```bash
+python -m src.backends.benchmark --data data/raw/bitstamp_BTC-USD_1h.parquet \
+    --strategy configs/strategies/momentum_low_volatility.json \
+    --space configs/sweeps/momentum_low_volatility_dense.json --backends python cpp cuda
+```
+
+The benchmark also reports the maximum metric difference and trade-count mismatches against Python on the same candidates.
+
+**Possible future optimisations**, once correctness is established on real data:
+- Parallelise inside a candidate (prefix products for the drawdown, block reductions).
+- Use float32 feature buffers.
+- Share feature buffers across periods and assets.

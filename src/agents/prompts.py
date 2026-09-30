@@ -14,19 +14,19 @@ from src.strategies.features import FEATURE_REGISTRY
 from src.strategies.operators import LOGIC_REGISTRY, OPERATOR_REGISTRY
 from src.strategies.schema import FIELDS, POSITIONS, SpecError, StrategySpec
 
+# Shows the JSON structure only. Kept deliberately plain (one condition): a small model tends to
+# copy whatever strategy the example contains, so the example must not be a promising idea.
 EXAMPLE_PROPOSAL = {
-    "hypothesis": "Multi-day momentum persists when hourly volatility is low.",
-    "rationale": "Calm trends attract gradual flows; noisy regimes reverse.",
+    "hypothesis": "Prices far below their weekly average tend to revert upward.",
+    "rationale": "One sentence on why the effect could exist.",
     "strategy": {
-        "name": "momentum_low_vol",
+        "name": "weekly_mean_reversion",
         "conditions": [
-            {"id": "mom", "feature": "momentum", "field": "close", "lookback": 72, "operator": ">", "threshold": 0.01},
-            {"id": "vol", "feature": "volatility", "field": "close", "lookback": 48, "operator": "<", "threshold": 0.008},
+            {"id": "z", "feature": "zscore", "field": "close", "lookback": 168, "operator": "<", "threshold": -2.0},
         ],
         "logic": "AND", "true_position": 1, "false_position": 0,
     },
-    "parameter_space": {"mom.lookback": [48, 72, 120, 168], "mom.threshold": [0.005, 0.01, 0.02],
-                        "vol.threshold": [0.005, 0.008, 0.012]},
+    "parameter_space": {"z.lookback": [72, 168, 336], "z.threshold": [-2.5, -2.0, -1.5]},
 }
 
 
@@ -60,7 +60,7 @@ the next bar's return. Each unit of position change costs {transaction_cost:g} o
 
 Output format: exactly one JSON object with keys "hypothesis", "rationale", "strategy", \
 "parameter_space". Parameter names are "<condition id>.lookback" or "<condition id>.threshold". \
-Example:
+Format example (structure only; do NOT reuse its idea or values):
 {json.dumps(EXAMPLE_PROPOSAL, separators=(",", ":"))}
 
 Rules:
@@ -69,6 +69,9 @@ Rules:
 - Features only use current and past bars; do not try to use future information.
 - Propose ONE testable hypothesis; hypothesis and rationale are one short sentence each.
 - 1 to 3 conditions. Do not propose buy-and-hold or cash; they are benchmarks.
+- Costs matter: every position change pays the cost, so a rule that flips every few bars pays it \
+thousands of times. Use the COSTS line of the feedback to see how often strategies traded.
+- You may refine an earlier idea with different parameter ranges, but never resubmit an identical experiment.
 - Parameter ranges must be sensible for each feature's threshold units, and the product of \
 the list lengths must be at most {max_candidates}. 3-6 values per parameter is usually enough."""
 
@@ -107,6 +110,12 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
                      f"worst {_f(v.get('worst'))}")
         lines.append(f"GENERALIZATION: median {metric} of the selected went {_f(v.get('train_median_of_selected'))} "
                      f"(train) -> {_f(v.get('median'))} (validation), change {_f(v.get('median_change'))}")
+    c = record.costs
+    if c:
+        lines.append(f"COSTS ({c.get('scope')}, train): ~{_f(c.get('median_trades_per_year'), '.0f')} trades/year "
+                     f"(a position change every ~{_f(c.get('median_bars_between_trades'), '.0f')} bars), "
+                     f"exposure {_pct(c.get('median_exposure'))}, fees ~{_pct(c.get('median_annual_cost'))} of capital "
+                     f"per year vs net annualized return {_pct(c.get('median_annualized_return'))}")
     bench = record.benchmarks.get(period, {})
     if bench:
         lines.append(f"BENCHMARKS ({period} {metric}): "
@@ -132,8 +141,8 @@ def feedback_message(records: list[ExperimentRecord], recent: int = 2, include_v
             "different idea. Do not simply chase the highest train result.")
 
 
-def _f(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:.2f}"
+def _f(value: float | None, spec: str = ".2f") -> str:
+    return "n/a" if value is None else format(value, spec)
 
 
 def _pct(value: float | None) -> str:

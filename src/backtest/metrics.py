@@ -7,6 +7,10 @@ import pandas as pd
 
 HOURS_PER_YEAR = 24 * 365  # crypto trades 24/7
 
+# Order of compute_metrics' output; native backends (cuda/backtest.cu, enum Metric) use the same order.
+METRIC_NAMES = ("cumulative_return", "annualized_return", "sharpe", "annualized_volatility", "max_drawdown",
+                "turnover", "annual_turnover", "n_trades", "exposure", "n_bars")
+
 
 def cumulative_return(returns: pd.Series) -> float:
     """Total compounded return over the period."""

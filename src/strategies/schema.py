@@ -205,11 +205,25 @@ class ResearchProposal:
         }
 
     def key(self) -> str:
-        """Identity of the experiment (rules + search space, ignoring names and prose), for duplicates."""
-        strategy = self.strategy.to_dict()
-        strategy.pop("name", None)
-        strategy.pop("description", None)
-        return json.dumps({"strategy": strategy, "space": self.parameter_space}, sort_keys=True)
+        """Identity of the experiment, for rejecting exact repeats.
+
+        Ignores names, prose, condition ids and condition order. A swept parameter is represented by
+        its sorted value list (its base value is irrelevant). So renaming or reordering conditions
+        is still a duplicate, while the same rules with different parameter ranges are a new
+        experiment (a refinement).
+        """
+        conditions = []
+        for c in self.strategy.conditions:
+            item: dict[str, Any] = {"feature": c.feature, "field": c.field, "operator": c.operator}
+            for param in SWEEPABLE_PARAMS:
+                values = self.parameter_space.get(f"{c.key}.{param}")
+                base = getattr(c, param)
+                item[param] = (sorted(float(v) for v in values) if values is not None
+                               else None if base is None else float(base))
+            conditions.append(json.dumps(item, sort_keys=True))
+        s = self.strategy
+        return json.dumps({"conditions": sorted(conditions), "logic": s.logic if len(conditions) > 1 else "AND",
+                           "true_position": s.true_position, "false_position": s.false_position}, sort_keys=True)
 
 
 # -------------------------------------------------------------------- validation

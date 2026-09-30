@@ -22,9 +22,15 @@ from typing import Any
 import numpy as np
 
 from src.research.experiment import ExperimentResult, ExperimentSettings
-from src.research.summary import robustness_warnings, summarize_benchmarks, summarize_train, summarize_validation
+from src.research.summary import (
+    robustness_warnings,
+    summarize_benchmarks,
+    summarize_costs,
+    summarize_train,
+    summarize_validation,
+)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2 added `costs`; v1 records still load (missing fields get defaults)
 STATUSES = ("completed", "rejected", "failed")  # rejected: invalid LLM proposal; failed: evaluation error
 
 
@@ -52,6 +58,7 @@ class ExperimentRecord:
     train_summary: dict[str, Any] = field(default_factory=dict)
     validation_summary: dict[str, Any] = field(default_factory=dict)
     comparison: list[dict[str, Any]] = field(default_factory=list)
+    costs: dict[str, Any] = field(default_factory=dict)
     benchmarks: dict[str, Any] = field(default_factory=dict)
     parameter_sensitivity: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -113,6 +120,7 @@ def add_results(record: ExperimentRecord, result: ExperimentResult, space: dict[
     record.parameter_sensitivity = to_json_safe(sensitivity)
     record.validation_summary = to_json_safe(summarize_validation(result))
     record.comparison = to_json_safe(result.comparison.to_dict("records"))
+    record.costs = to_json_safe(summarize_costs(result))
     record.benchmarks = to_json_safe(summarize_benchmarks(result))
     record.warnings = robustness_warnings(result, space)
     record.timing = to_json_safe(result.timing)

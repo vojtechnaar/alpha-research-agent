@@ -113,6 +113,20 @@ def test_duplicate_proposals_are_rejected() -> None:
     assert info.value.code == DUPLICATE_PROPOSAL
 
 
+def test_duplicate_detection_ignores_names_ids_and_order_but_allows_refinements() -> None:
+    first = parse_proposal(json.dumps(PROPOSAL), 100)
+    mom, vol = PROPOSAL["strategy"]["conditions"]
+    renamed = proposal(
+        hypothesis="Reworded.",
+        strategy={"name": "other", "conditions": [{**vol, "id": "volatility"}, {**mom, "id": "momentum"}]},
+        parameter_space={"momentum.threshold": [0.01, 0.0], "momentum.lookback": [72, 24, 6]},
+    )
+    assert parse_proposal(json.dumps(renamed), 100).key() == first.key()  # same experiment in disguise
+
+    refined = proposal(parameter_space={"mom.lookback": [48, 72, 96], "mom.threshold": [0.0, 0.01]})
+    assert parse_proposal(json.dumps(refined), 100, seen={first.key()}).key() != first.key()  # allowed
+
+
 def test_extract_json_reports_truncation() -> None:
     with pytest.raises(SpecError, match="ends before"):
         extract_json('{"hypothesis": "x"')
@@ -137,7 +151,8 @@ def test_feedback_is_compact_and_complete(settings: ExperimentSettings, tmp_path
     records = run(FakeGenerator([json.dumps(PROPOSAL)]), settings, tmp_path, hypotheses=1)
     text = prompts.feedback_message(records)
     for section in ("PREVIOUS HYPOTHESES", "HYPOTHESIS:", "STRATEGY:", "TRAIN (", "VALIDATION (", "GENERALIZATION",
-                    "BENCHMARKS (validation", "PARAMETER SENSITIVITY", "mom.lookback", "ROBUSTNESS WARNINGS"):
+                    "COSTS (", "trades/year", "BENCHMARKS (validation", "PARAMETER SENSITIVITY", "mom.lookback",
+                    "ROBUSTNESS WARNINGS"):
         assert section in text
     assert len(text) < 4000  # a few hundred tokens, never the CSV or price history
 
@@ -230,3 +245,23 @@ def test_feedback_is_identical_for_fresh_and_reloaded_records(settings: Experime
     reloaded = load_records(tmp_path / "experiments.jsonl")
     assert prompts.feedback_message(records) == prompts.feedback_message(reloaded)
     assert "flat n/a" in prompts.feedback_message(records)  # undefined Sharpe shown as n/a, not nan
+
+
+def test_cli_runs_with_native_backend_when_built(tmp_path: Path) -> None:
+    from src.backends import get_evaluator
+
+    try:
+        get_evaluator("cpp")
+    except (FileNotFoundError, OSError):
+        pytest.skip("C++ backend not built (make -C cuda cpu)")
+    data_path = tmp_path / "syn.parquet"
+    make_hourly_data().to_parquet(data_path)
+    replay = tmp_path / "proposals.jsonl"
+    replay.write_text(variant([6, 24]) + "\n")
+    assert main(["--data", str(data_path), "--hypotheses", "1", "--replay", str(replay), "--backend", "cpp",
+                 "--output-dir", str(tmp_path / "out"), "--train-start", "2020-01-01", "--train-end", "2020-03-15",
+                 "--validation-start", "2020-03-15", "--validation-end", "2020-05-01", "--min-train-trades", "1"]) == 0
+    (run_dir,) = (tmp_path / "out").iterdir()
+    assert json.loads((run_dir / "run.json").read_text())["backend"]["name"] == "cpp"
+    (record,) = load_records(run_dir / "experiments.jsonl")
+    assert record.status == "completed" and record.timing["backend"] == "cpp"

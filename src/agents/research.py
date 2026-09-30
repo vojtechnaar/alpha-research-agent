@@ -1,6 +1,7 @@
 """Controlled research loop: Qwen proposes a hypothesis, the engine tests it, a summary goes back.
 
     python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypotheses 5 --device cuda:0
+    python -m src.agents.research ... --backend cuda --max-candidates 20000   # backtests on the GPU
 
 --hypotheses N is a hard upper bound on research iterations (LLM proposals), NOT on backtests;
 each iteration may backtest up to --max-candidates parameter combinations.
@@ -29,6 +30,7 @@ from typing import Any, Callable, Protocol
 import pandas as pd
 
 from src.agents.proposals import parse_proposal
+from src.backends import BACKENDS, get_evaluator
 from src.agents.prompts import feedback_message, initial_request, repair_message, system_prompt
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, load_benchmarks
 from src.research.experiment import ExperimentSettings, Period, run_experiment
@@ -194,6 +196,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-candidates", type=int, default=1000, help="max parameter combinations per hypothesis")
     p.add_argument("--transaction-cost", type=float, default=0.001, help="fraction per unit turnover (0.001 = 10 bps)")
     p.add_argument("--benchmarks-dir", type=Path, default=DEFAULT_BENCHMARKS_DIR)
+    p.add_argument("--backend", choices=BACKENDS, default="python", help="backtest engine (cpp/cuda need make -C cuda)")
+    p.add_argument("--backtest-device", type=int, help="GPU index for --backend cuda (default: $BACKTEST_DEVICE or 0)")
     p.add_argument("--max-proposal-retries", type=int, default=2)
     p.add_argument("--max-consecutive-rejections", type=int, default=3)
     p.add_argument("--recent", type=int, default=2, help="experiments shown in detail in the feedback")
@@ -229,6 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     data = pd.read_parquet(args.data).sort_values("timestamp").reset_index(drop=True)
     dataset = str(data["symbol"].iloc[0]) if "symbol" in data else args.data.stem
     benchmarks = load_benchmarks(args.benchmarks_dir)
+    evaluator = get_evaluator(args.backend, args.backtest_device)  # fails fast if the library is not built
+    backend_info = getattr(evaluator, "info", "python (pandas reference)")
+    print(f"Backtest backend: {backend_info}")
 
     if args.replay:
         generator: Generator = ReplayGenerator(args.replay)
@@ -248,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         "data_path": str(args.data),
         "dataset": dataset,
         "settings": settings.to_dict(),
+        "backend": {"name": getattr(evaluator, "__name__", args.backend), "info": backend_info},
         "loop": asdict(loop),
         "generator": getattr(generator, "settings", {}),
         "benchmarks": {name: spec.to_dict() for name, spec in benchmarks.items()},
@@ -256,7 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Run {run_id}: at most {loop.hypotheses} hypotheses, <= {settings.max_candidates} candidates each, "
           f"cost {settings.transaction_cost:g}. Records: {run_dir / 'experiments.jsonl'}")
 
-    records = run_research(generator, data, settings, loop, run_dir, benchmarks, dataset, str(args.data), run_id)
+    records = run_research(generator, data, settings, loop, run_dir, benchmarks, dataset, str(args.data), run_id,
+                           evaluator=evaluator)
     print(f"\nDone: {len(records)} iterations "
           f"({sum(r.status == 'completed' for r in records)} completed, "
           f"{sum(r.status == 'rejected' for r in records)} rejected, {sum(r.status == 'failed' for r in records)} failed).")

@@ -40,6 +40,12 @@ def format_record(record: ExperimentRecord) -> str:
                      f"{_f(v.get('median'))}, best {_f(v.get('best'))}, worst {_f(v.get('worst'))}, "
                      f"median change vs train {_f(v.get('median_change'))}")
         lines.append("\n" + _comparison_table(record))
+    c = record.costs
+    if c:
+        lines.append(f"COSTS ({c.get('scope')}, train): ~{_f(c.get('median_trades_per_year'), '.0f')} trades/year, "
+                     f"position change every ~{_f(c.get('median_bars_between_trades'), '.0f')} bars, exposure "
+                     f"{_pct(c.get('median_exposure'))}, fees ~{_pct(c.get('median_annual_cost'))} of capital/year "
+                     f"vs net annualized return {_pct(c.get('median_annualized_return'))}")
     if record.benchmarks:
         lines.append("\nBENCHMARKS (same periods, same costs):\n" + _benchmark_table(record))
     if record.warnings:
@@ -67,8 +73,8 @@ def _benchmark_table(record: ExperimentRecord) -> str:
     return pd.DataFrame(rows).to_string(index=False, float_format="{:.3f}".format)
 
 
-def _f(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:.2f}"
+def _f(value: float | None, spec: str = ".2f") -> str:
+    return "n/a" if value is None else format(value, spec)
 
 
 def _pct(value: float | None) -> str:

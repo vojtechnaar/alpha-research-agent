@@ -2,7 +2,7 @@
 
 The goal is an automated quantitative research system:
 - **Qwen3-8B is the researcher.** It decides *what* to test: a hypothesis, a strategy and a parameter space.
-- **A numerical engine is the experiment engine.** It runs the parameter search and backtests. It's Python now, with C++/CUDA later.
+- **A numerical engine is the experiment engine.** It runs the parameter search and backtests, in Python, C++ or CUDA (`--backend`).
 - **Only a compact summary goes back to the LLM,** which then proposes the next hypothesis.
 
 ```
@@ -16,7 +16,7 @@ Validation against the trusted registries (rejections → repair)      src/strat
         ↓
 Parameter sweep (Cartesian product, candidate budget)           src/strategies/sweep.py    NOW
         ↓
-Candidate evaluator backend:  Python (NOW) → C++ CPU → CUDA (FUTURE)
+Candidate evaluator backend:  Python | C++ CPU | CUDA GPU       src/backends/, cuda/       NOW
         ↓
 TRAIN backtests (all candidates) → top N by train metric → frozen
         ↓
@@ -39,7 +39,8 @@ Compact feedback (~500 tokens) → Qwen → next hypothesis         src/agents/p
 | Data | `src/data/download.py` | Hourly OHLCV from Bitstamp → `data/raw/*.parquet` |
 | Spec | `src/strategies/schema.py` | `StrategySpec`, `ResearchProposal`, validation, rejection codes |
 | Primitives | `src/strategies/features.py`, `operators.py` | Trusted feature, operator and logic registries |
-| Evaluation | `src/strategies/evaluator.py`, `sweep.py` | Spec → positions → backtest; candidate generation; `evaluate_candidates` backend |
+| Evaluation | `src/strategies/evaluator.py`, `sweep.py` | Spec → positions → backtest; candidate generation; `evaluate_candidates` (Python reference backend) |
+| Native backends | `cuda/backtest.cu`, `src/backends/` | The same evaluation in C++ (CPU, OpenMP) and CUDA (GPU), called via ctypes; parity-tested against Python |
 | Backtest | `src/backtest/` | Execution lag, costs, asset-agnostic metrics |
 | Experiments | `src/research/experiment.py` | Train sweep → top N → validation retest |
 | Benchmarks | `src/research/benchmarks.py`, `configs/benchmarks/` | Buy-and-hold, flat (cash), naive 24h momentum |
@@ -58,15 +59,15 @@ python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypo
 
 1. **Build the context.** On the first iteration it's "no experiments yet". After that it's the compact feedback: one line per earlier hypothesis, plus details of the most recent `--recent` experiments.
 2. **Ask Qwen for one proposal:** JSON with `hypothesis`, `rationale`, `strategy` and `parameter_space`.
-3. **Parse and validate it before anything runs.** Validation checks the JSON syntax, the features and operators against the registries, every parameter value, the size of the search (`SEARCH_SPACE_TOO_LARGE`), and duplicates of experiments already run (`DUPLICATE_PROPOSAL`).
+3. **Parse and validate it before anything runs.** Validation checks the JSON syntax, the features and operators against the registries, every parameter value, the size of the search (`SEARCH_SPACE_TOO_LARGE`), and exact repeats of experiments already run (`DUPLICATE_PROPOSAL`). The repeat check ignores names, condition ids and condition order, so renaming a condition doesn't get a repeat through. The same rules with *different* parameter ranges count as a refinement and are allowed.
 4. **Repair invalid replies (bounded).** The validator's error is shown to Qwen with a request to fix only the JSON. That's at most `--max-proposal-retries` extra calls (default 2), so at most 3 LLM calls per iteration.
 5. **Generate the Cartesian product** of the parameter space and enforce the candidate budget.
 6. **Train sweep:** backtest every candidate on TRAIN.
-7. **Select the top N** (`--top`) by the selection metric (default Sharpe), using train results only. Candidates with fewer than `--min-train-trades` trades aren't eligible.
+7. **Select the top N** (`--top`) by the selection metric (default Sharpe), using train results only. Candidates with fewer than `--min-train-trades` trades aren't eligible, and a candidate that traded identically to a better-ranked one is skipped, so the N slots go to N different strategies.
 8. **Freeze** the selected parameters.
 9. **Validation retest:** backtest only those frozen candidates on VALIDATION.
 10. **Benchmarks:** evaluate buy-and-hold, cash and naive momentum on both periods, with the same costs and backend.
-11. **Summarise:** train distribution, validation results, train → validation degradation, parameter sensitivity and warnings.
+11. **Summarise:** train distribution, validation results, train → validation degradation, trading costs (trades per year, bars between position changes, exposure, fees as % of capital per year), parameter sensitivity and warnings.
 12. **Save** the experiment record, plus the train table as a separate CSV.
 13. **Feed the compact summary** into the next iteration.
 
@@ -147,7 +148,7 @@ A record holds the following, and never any time series (a typical record is a f
 - **Generated code is never executed.** Qwen produces JSON only, and it's validated against registries that humans wrote and tested. Unsupported requests are rejected with `UNSUPPORTED_FEATURE`, `UNSUPPORTED_OPERATOR`, `INVALID_SPEC`, `MALFORMED_JSON`, `SEARCH_SPACE_TOO_LARGE` or `DUPLICATE_PROPOSAL`, and the code goes back to Qwen as feedback. There is no `eval` or `exec`. New primitives go through human review.
 - **The LLM decides; the engine explores.** Qwen generates about 10 tokens per second on DeepDish, so one proposal (about 250 tokens of JSON) costs about 25 s. One Python backtest costs about 25 ms. So each hypothesis gets one LLM call and hundreds of backtests, and Qwen reads a summary of about 500 tokens, never CSVs or prices.
 - **`--max-new-tokens` defaults to 320.** A two-condition proposal with its parameter space is roughly 200–280 tokens. A limit of 200 would regularly cut the JSON off, which forces a retry and costs more than it saves.
-- **Correctness first, then CUDA.** Everything above the backend depends only on the `evaluate_candidates` contract (`CandidateEvaluator` in `sweep.py`): data, candidates, costs and a period in; one metrics row per candidate out. A C++ or CUDA backend can be passed as `evaluator=` without changing the StrategySpec, the LLM, the records, the validation logic or the reporting. Every record includes `timing.backend` and `ms_per_train_candidate`, which the Python vs C++ vs CUDA benchmark will use.
+- **Correctness first, then CUDA.** Everything above the backend depends only on the `evaluate_candidates` contract (`CandidateEvaluator` in `sweep.py`): data, candidates, costs and a period in; one metrics row per candidate out. The C++ and CUDA backends (`src/backends/`) implement the same contract, so choosing one is just `--backend cuda`. Nothing else changes: not the StrategySpec, the LLM, the records, the validation logic or the reporting. `tests/test_native_backend.py` requires them to match the Python engine (every feature × operator, AND/OR, all position combinations, benchmarks, price gaps, flat prices, zero volume), and `python -m src.backends.benchmark` compares speed and results on real data. Every record includes `timing.backend` and `ms_per_train_candidate`.
 - **The loop has explicit limits.** See the stopping rules above.
 
 **Python baseline** (the reference for the future speed-up), measured on DeepDish in September 2026 on BTC/USD hourly bars from 2017-01-01 to 2023-01-01 (about 52,000 bars): a 300-candidate sweep took 7.5 s, about 25 ms per candidate on one CPU core with pandas.
@@ -206,4 +207,6 @@ nvidia-smi                 # look at Memory-Usage and the Processes table
 python -m src.agents.research ... --device cuda:2      # or: QWEN_DEVICE=cuda:2 python -m ...
 ```
 
-Choose a GPU with at least about 20 GB free and no heavy processes. Never kill other users' processes. The numerical backtests run on the CPU for now. A future CUDA backend can use a different GPU, or run after the LLM step.
+Choose a GPU with at least about 20 GB free and no heavy processes. Never kill other users' processes.
+
+With `--backend cuda`, the backtests run on `--backtest-device` (default `$BACKTEST_DEVICE` or 0). They need little memory: the feature buffers and a metrics table, typically well under 1 GB. So they can share the GPU with Qwen, or use another free one. The LLM and the backtests take turns within an iteration, so they never compete for the GPU at the same time.

@@ -8,7 +8,7 @@ import pytest
 
 from src.research.benchmarks import evaluate_benchmarks, load_benchmarks
 from src.research.experiment import ExperimentSettings, Period, run_experiment, select_top
-from src.research.summary import robustness_warnings
+from src.research.summary import robustness_warnings, summarize_costs
 from src.strategies.evaluator import evaluate_strategy
 from src.strategies.schema import StrategySpec
 from src.strategies.sweep import evaluate_candidates
@@ -50,10 +50,24 @@ def test_select_top_ranks_on_train_only() -> None:
     train = pd.DataFrame({
         "candidate": [0, 1, 2, 3, 4],
         "sharpe": [0.5, 1.2, np.nan, 1.2, 2.0],
-        "n_trades": [50, 50, 50, 50, 3],
+        "n_trades": [50, 50, 50, 60, 3],
+        "cumulative_return": [0.1, 0.3, 0.2, 0.4, 0.9],
     })
-    assert select_top(train, "sharpe", 3) == [4, 1, 3, 0][:3]
+    assert select_top(train, "sharpe", 3) == [4, 1, 3]
     assert select_top(train, "sharpe", 3, min_trades=10) == [1, 3, 0]  # tie -> lower id first; NaN excluded
+
+
+def test_select_top_skips_candidates_that_traded_identically() -> None:
+    train = pd.DataFrame({
+        "candidate": [0, 1, 2, 3],
+        "sharpe": [1.0, 1.0, 0.8, 0.5],
+        "n_trades": [40, 40, 30, 20],
+        "turnover": [40.0, 40.0, 30.0, 20.0],
+        "exposure": [0.3, 0.3, 0.2, 0.1],
+        "cumulative_return": [0.5, 0.5, 0.4, 0.2],
+    })
+    assert select_top(train, "sharpe", 3) == [0, 2, 3]  # 1 is a copy of 0
+    assert select_top(train, "sharpe", 3, distinct=False) == [0, 1, 2]
 
 
 def test_validation_does_not_influence_selection(data: pd.DataFrame, settings: ExperimentSettings) -> None:
@@ -137,7 +151,8 @@ def test_warnings_flag_multiple_testing_and_identical_candidates(data: pd.DataFr
     result = run_experiment(data, BASE, space, settings, load_benchmarks())
     warnings = robustness_warnings(result, space)
     assert any("multiple testing" in w for w in warnings)
-    assert any("exactly the same train results" in w for w in warnings)
+    assert any("traded exactly like another combination" in w for w in warnings)
+    assert len(result.selected) == 2  # 6 combinations but only 2 distinct strategies (one per mom.lookback)
     assert any("buy-and-hold" in w for w in warnings)
 
 
@@ -150,3 +165,15 @@ def test_cli_transaction_cost_arguments() -> None:
     assert parse_args([*base, "--cost-bps", "20"]).transaction_cost == pytest.approx(0.002)
     with pytest.raises(SystemExit):
         parse_args([*base, "--cost-bps", "20", "--transaction-cost", "0.002"])
+
+
+def test_cost_summary_and_warning_for_a_churning_strategy(data: pd.DataFrame, settings: ExperimentSettings) -> None:
+    churn = StrategySpec.from_dict({"name": "churn", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": ">", "threshold": 0.0}]})
+    result = run_experiment(data, churn, {"r.threshold": [0.0, 0.001]}, settings)
+    costs = summarize_costs(result)
+    assert costs["median_bars_between_trades"] < 5  # flips roughly every other bar
+    assert costs["median_trades_per_year"] > 1000
+    assert costs["median_annual_cost"] > 1.0  # more than 100% of capital per year in fees
+    assert any(w.startswith("Trading costs") and "costs exceed the net return" in w
+               for w in robustness_warnings(result, {"r.threshold": [0.0, 0.001]}))

@@ -10,8 +10,10 @@ from typing import Any
 
 import pandas as pd
 
-from src.research.experiment import ExperimentResult
+from src.research.experiment import TRADE_SIGNATURE, ExperimentResult
 from src.strategies.sweep import summarize_sweep
+
+COST_WARNING_ANNUAL_COST = 0.05  # warn when fees exceed 5% of capital per year
 
 BENCHMARK_METRICS = ("cumulative_return", "annualized_return", "sharpe", "annualized_volatility",
                      "max_drawdown", "turnover", "n_trades", "exposure", "n_bars")
@@ -50,6 +52,31 @@ def summarize_validation(result: ExperimentResult) -> dict[str, Any]:
     }
 
 
+def summarize_costs(result: ExperimentResult) -> dict[str, Any]:
+    """How much the selected top-N candidates trade on TRAIN and what that costs them.
+
+    annual_cost = annual turnover x transaction cost: the fees paid per year as a fraction of
+    capital (a long -> short flip counts twice). Compare it with the net annualized return:
+    gross return ~= net return + fees.
+    """
+    s = result.settings
+    ids = result.selected or list(result.train["candidate"])
+    table = result.train.set_index("candidate").loc[ids]
+    if table.empty:
+        return {}
+    years = table["n_bars"] / s.periods_per_year
+    trades = table["n_trades"]
+    return {
+        "scope": f"top {len(ids)} by train {s.selection_metric}" if result.selected else "all candidates",
+        "transaction_cost": s.transaction_cost,
+        "median_trades_per_year": _num((trades / years).median()),
+        "median_bars_between_trades": _num((table["n_bars"] / trades.where(trades > 0)).median()),
+        "median_exposure": _num(table["exposure"].median()),
+        "median_annual_cost": _num((table["annual_turnover"] * s.transaction_cost).median()),
+        "median_annualized_return": _num(table["annualized_return"].median()),
+    }
+
+
 def summarize_benchmarks(result: ExperimentResult) -> dict[str, dict[str, dict[str, Any]]]:
     """{period: {benchmark: metrics}} including each period's actual first/last bar."""
     return {
@@ -63,13 +90,18 @@ def summarize_benchmarks(result: ExperimentResult) -> dict[str, dict[str, dict[s
 
 
 def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> list[str]:
-    """Plain-language red flags for over-fitting and weak evidence."""
+    """Plain-language red flags for over-fitting, weak evidence and cost drag."""
     s = result.settings
     metric, train, table = s.selection_metric, result.train, result.comparison
     warnings = []
     if result.n_candidates > 1:
         warnings.append(f"{result.n_candidates} parameter combinations were tested; the best train {metric} "
                         "is inflated by selection (multiple testing).")
+    redundant = len(train) - len(train.drop_duplicates(list(TRADE_SIGNATURE)))
+    if redundant:
+        warnings.append(f"{redundant} of {len(train)} combinations traded exactly like another combination "
+                        "(some parameter values do not change the positions, e.g. a filter that never binds); "
+                        "only distinct candidates were retested.")
     median_train = train[metric].median()
     if pd.notna(median_train) and median_train <= 0:
         warnings.append(f"Median train {metric} is {median_train:.2f}: the idea fails for most parameter values, "
@@ -85,11 +117,16 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
             warnings.append(f"Best train value of {name} ({best[name]}) is at the edge of the tested range; "
                             "the optimum may lie outside it.")
 
-    # Different parameters can give identical positions (e.g. a filter that never binds).
-    identical = len(table) - len(table.drop_duplicates([f"train_{metric}", "train_n_trades", "train_exposure"]))
-    if identical:
-        warnings.append(f"{identical} of the top {len(table)} have exactly the same train results as a higher-ranked "
-                        "candidate: some parameters do not change the positions (e.g. a filter that never binds).")
+    costs = summarize_costs(result)
+    annual_cost, net = costs.get("median_annual_cost"), costs.get("median_annualized_return")
+    if annual_cost is not None and annual_cost > COST_WARNING_ANNUAL_COST:
+        verdict = "costs exceed the net return" if net is not None and annual_cost > abs(net) else "costs are large"
+        warnings.append(
+            f"Trading costs: the top candidates change position every ~{_fmt(costs['median_bars_between_trades'], '.0f')} "
+            f"bars (~{_fmt(costs['median_trades_per_year'], '.0f')} trades/year) and pay ~{100 * annual_cost:.0f}% of "
+            f"capital per year in fees vs {_fmt(None if net is None else 100 * net, '.0f')}% net annualized return "
+            f"({verdict}). Slower signals or fewer position changes keep more of the gross return."
+        )
 
     t, v = table[f"train_{metric}"].median(), table[f"validation_{metric}"].median()
     if pd.notna(v) and v <= 0:
@@ -120,6 +157,10 @@ def _benchmark_metric(result: ExperimentResult, period: str, name: str, metric: 
         return None
     value = table.set_index("benchmark").loc[name, metric]
     return None if pd.isna(value) else float(value)
+
+
+def _fmt(value: float | None, spec: str) -> str:
+    return "n/a" if value is None else format(value, spec)
 
 
 def _num(value: Any) -> float | None:
