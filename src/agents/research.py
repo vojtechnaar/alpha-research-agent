@@ -30,14 +30,14 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from src.agents.proposals import parse_proposal
+from src.agents.proposals import TRUNCATED_HINT, parse_proposal
 from src.backends import BACKENDS, get_evaluator
 from src.agents.prompts import feedback_message, initial_request, repair_message, system_prompt
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, load_benchmarks
 from src.research.experiment import ExperimentSettings, Period, run_experiment
 from src.research.records import ExperimentRecord, add_results, append_record, new_record
 from src.research.report import format_record
-from src.strategies.schema import ResearchProposal, SpecError, StrategySpec
+from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError, StrategySpec
 from src.strategies.sweep import CandidateEvaluator, evaluate_candidates
 
 MAX_HYPOTHESES = 100  # guard against typos like --hypotheses 5000
@@ -79,10 +79,14 @@ def request_proposal(
     """Ask for a proposal; on a validation error, show the error and ask for a repair.
 
     Makes at most 1 + max_retries LLM calls. Returns (proposal or None, attempts, last error).
+    A reply that hit the token limit is reported as truncated (with how to shorten it). After a
+    duplicate, the model's copied reply is NOT kept in the conversation (a small model tends to
+    repeat the last JSON it wrote); the original request is re-sent with a note instead.
     """
     conversation = list(messages)
     attempts: list[dict[str, Any]] = []
     error: SpecError | None = None
+    duplicate_notes: list[str] = []
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
         text = generator.generate(conversation, n=1, seed=None if seed is None else seed + attempt)[0]
@@ -91,9 +95,17 @@ def request_proposal(
         try:
             proposal = parse_proposal(text, max_candidates, seen)
         except SpecError as exc:
+            if exc.code == MALFORMED_JSON and info.get("hit_max_new_tokens"):
+                exc = SpecError(MALFORMED_JSON, TRUNCATED_HINT)
             error = exc
             attempts.append({**info, "error": str(exc), "code": exc.code})
-            conversation += [{"role": "assistant", "content": text}, {"role": "user", "content": repair_message(exc)}]
+            if exc.code == DUPLICATE_PROPOSAL:
+                duplicate_notes.append(f"NOTE: a previous reply was rejected: {exc}")
+                request = {"role": "user", "content": "\n\n".join([messages[-1]["content"], *duplicate_notes])}
+                conversation = [*messages[:-1], request]
+            else:
+                conversation += [{"role": "assistant", "content": text},
+                                 {"role": "user", "content": repair_message(exc)}]
             continue
         attempts.append({**info, "error": None, "code": None})
         return proposal, attempts, None
@@ -206,7 +218,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="show the LLM train results only (keeps validation blind)")
     p.add_argument("--model-id", default="Qwen/Qwen3-8B")
     p.add_argument("--device", help="e.g. cuda:2 (default: $QWEN_DEVICE or cuda:0)")
-    p.add_argument("--max-new-tokens", type=int, default=320)
+    p.add_argument("--max-new-tokens", type=int, default=512,
+                   help="generation stops at the end of the JSON; this only caps runaway replies")
     p.add_argument("--temperature", type=float, default=0.7, help="0 = greedy decoding")
     p.add_argument("--top-p", type=float, default=0.8)
     p.add_argument("--top-k", type=int, default=20)

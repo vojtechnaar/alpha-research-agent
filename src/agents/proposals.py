@@ -12,18 +12,29 @@ from collections.abc import Mapping, Set
 from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError
 
 
+TRUNCATED_HINT = ("the reply was cut off at the token limit before the JSON was complete. Make it shorter: "
+                  "compact single-line JSON, one short sentence each for hypothesis and rationale, at most 8 values "
+                  "per parameter")
+
+
 def extract_json(text: str) -> dict:
-    """The JSON object in a reply, tolerating <think> blocks, markdown fences and stray prose."""
+    """The first complete JSON object in a reply.
+
+    Tolerates <think> blocks, markdown fences, prose before the object and anything after it
+    (a second object, an explanation containing braces).
+    """
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    start, end = text.find("{"), text.rfind("}")
+    start = text.find("{")
     if start == -1:
         raise SpecError(MALFORMED_JSON, "reply contains no JSON object")
-    if end < start:
-        raise SpecError(MALFORMED_JSON, "reply ends before the JSON object is complete (too many tokens?)")
     try:
-        data = json.loads(text[start : end + 1])
+        data, _ = json.JSONDecoder().raw_decode(text, start)
     except json.JSONDecodeError as exc:
-        raise SpecError(MALFORMED_JSON, f"invalid JSON: {exc.msg} at position {exc.pos}") from None
+        if text.count("{") > text.count("}"):  # braces never close: the reply stopped mid-object
+            raise SpecError(MALFORMED_JSON, TRUNCATED_HINT) from None
+        near = text[max(start, exc.pos - 40) : exc.pos + 20].replace("\n", " ")
+        raise SpecError(MALFORMED_JSON, f"invalid JSON ({exc.msg}) near: ...{near}... "
+                                        "Check commas between items and that every quote, [ and { is closed.") from None
     if not isinstance(data, dict):
         raise SpecError(MALFORMED_JSON, "the JSON value must be an object")
     return data

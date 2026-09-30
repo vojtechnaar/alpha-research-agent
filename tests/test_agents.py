@@ -128,8 +128,19 @@ def test_duplicate_detection_ignores_names_ids_and_order_but_allows_refinements(
 
 
 def test_extract_json_reports_truncation() -> None:
-    with pytest.raises(SpecError, match="ends before"):
-        extract_json('{"hypothesis": "x"')
+    with pytest.raises(SpecError, match="cut off at the token limit"):
+        extract_json('{"hypothesis": "x", "strategy": {"name": "a", "conditions": [{"feature": "momentum"}')
+
+
+def test_extract_json_ignores_text_after_the_first_object() -> None:
+    text = json.dumps(PROPOSAL) + '\nNote: I could also try {"feature": "zscore"} next.\n' + json.dumps(PROPOSAL)
+    assert extract_json(text) == PROPOSAL  # previously failed with "Extra data"
+
+
+def test_extract_json_error_is_actionable() -> None:
+    with pytest.raises(SpecError, match="Check commas") as info:
+        extract_json('{"hypothesis": "x" "rationale": "y"}')
+    assert "near:" in str(info.value) and "position" not in str(info.value)
 
 
 # ---------------------------------------------------------------- prompts and feedback
@@ -142,7 +153,7 @@ def test_system_prompt_is_generated_from_registries(monkeypatch: pytest.MonkeyPa
         assert name in text
     for op in (">", ">=", "<", "<=", "AND", "OR"):
         assert op in text
-    assert "321" in text and "JSON only" in text and "No Python, no CUDA" in text
+    assert "321" in text and "exactly ONE compact JSON object" in text and "No Python, no CUDA" in text
     assert "returns: one-bar return" in text and "NO lookback" in text and "use momentum" in text
     json.loads(json.dumps(prompts.EXAMPLE_PROPOSAL))
     parse_proposal(json.dumps(prompts.EXAMPLE_PROPOSAL), 321)  # the example itself must be valid
@@ -205,8 +216,12 @@ def test_duplicate_proposal_triggers_a_repair(settings: ExperimentSettings, tmp_
     records = run(generator, settings, tmp_path, hypotheses=2)
     assert [r.status for r in records] == ["completed", "completed"]
     assert records[1].llm["attempts"][0]["code"] == DUPLICATE_PROPOSAL
-    repair = generator.calls[2][-1]["content"]  # the message after the duplicate names what it repeated
-    assert "repeats experiment 1 ('Momentum over [6, 24].')" in repair and "different features" in repair
+    retry = generator.calls[2]  # the retry after the duplicate names what it repeated...
+    assert "repeats experiment 1 ('Momentum over [6, 24].')" in retry[-1]["content"]
+    assert "different features" in retry[-1]["content"]
+    # ...and does not show the model its own copied reply (small models tend to repeat it)
+    assert [m["role"] for m in retry] == ["system", "user"]
+    assert retry[-1]["content"].startswith(generator.calls[1][-1]["content"])
 
 
 def test_evaluation_errors_are_recorded_not_fatal(settings: ExperimentSettings, tmp_path: Path) -> None:
@@ -283,7 +298,7 @@ def test_returns_with_lookback_is_repaired_using_the_error_hint(settings: Experi
     assert "use momentum with lookback N" in generator.calls[1][-1]["content"]  # the repair prompt carries the hint
 
 
-@pytest.mark.parametrize("budget, values", [(20000, "5-10 values"), (1000, "4-8 values"), (100, "3-5 values")])
+@pytest.mark.parametrize("budget, values", [(20000, "5-8 values"), (1000, "4-7 values"), (100, "3-5 values")])
 def test_search_guidance_scales_with_the_candidate_budget(budget: int, values: str) -> None:
     text = prompts.system_prompt(max_candidates=budget, transaction_cost=0.001)
     assert values in text and f"up to {budget} per hypothesis" in text and "WIDE range" in text
@@ -302,3 +317,20 @@ def test_feedback_shows_exploration_coverage(settings: ExperimentSettings, tmp_p
     assert "long/flat x1" in text and "short/flat x1" in text  # the rejected 3rd proposal is not counted
     assert "EXPLORATION" in prompts.feedback_message(records)
     assert "(budget 1000)" in prompts.describe_experiment(records[0])
+
+
+def test_truncated_reply_is_reported_with_how_to_shorten_it(settings: ExperimentSettings, tmp_path: Path) -> None:
+    class Truncating(FakeGenerator):
+        def generate(self, messages, n=1, seed=None):
+            reply = super().generate(messages, n, seed)
+            self.last_stats = {"new_tokens": 512, "hit_max_new_tokens": len(self.calls) == 1}
+            return reply
+
+    cut = json.dumps(PROPOSAL)[:400] + '}]}'  # braces balanced by luck, but the JSON is broken
+    generator = Truncating([cut, json.dumps(PROPOSAL)])
+    (record,) = run(generator, settings, tmp_path, hypotheses=1)
+    assert record.status == "completed"
+    first = record.llm["attempts"][0]
+    assert first["code"] == MALFORMED_JSON and "cut off at the token limit" in first["error"]
+    assert first["hit_max_new_tokens"] is True
+    assert "compact single-line JSON" in generator.calls[1][-1]["content"]

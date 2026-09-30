@@ -36,6 +36,7 @@ Not built yet: LoRA fine-tuning, formal significance tests (PSR/DSR, bootstrap),
 - Qwen3-8B runs on one chosen GPU. Every proposal is validated first; invalid ones get a bounded number of repair attempts.
 - The loop is capped by `--hypotheses` and stops early after repeated rejections, so it can never run away.
 - The feedback to Qwen is a compact summary of about 700 tokens (results, costs, sensitivity, exploration coverage), never raw data.
+- It copes with a small model's format slips: the parser reads the first JSON object and ignores trailing text, truncation is detected and explained, and duplicate retries don't show the model its own copy.
 
 **5. CUDA: backtesting stopped being the bottleneck**
 - One C++/CUDA source file runs the same evaluation as the Python engine, parity-tested to 1e-12 with 0 trade mismatches.
@@ -68,6 +69,23 @@ Not built yet: LoRA fine-tuning, formal significance tests (PSR/DSR, bootstrap),
 - What's left is mostly the 8B model's research judgement. That's the motivation for LoRA fine-tuning on the collected experiment records.
 
 ---
+
+## 2026-09-30: JSON robustness after the 10-hypothesis run
+
+**Observed** (run `20260930-012429`, 10 hypotheses planned):
+- **Better:** the search grew from 27 to 80 combinations, and Qwen tried a new position rule (long after a sharp drop, i.e. a rebound idea). Validation median Sharpe was 0.18, still far below buy-and-hold at 2.04.
+- **Stopped early after 5 iterations:** 4 were rejected, which triggered the 3-in-a-row safety stop.
+- **"Extra data" (2 iterations):** Qwen wrote a valid JSON object followed by more text containing braces. The parser took everything from the first `{` to the last `}` and failed.
+- **"Expecting ',' delimiter at position 707":** a reply that was most likely cut off at the 320-token limit. The new wide-grid guidance made proposals longer. The message ("position 707") gave the model nothing it could act on.
+- **Duplicate repeated on all 3 attempts again:** the repair conversation showed Qwen its own duplicate reply, and it copied it.
+
+**Changed:**
+- The parser now reads the **first complete JSON object** and ignores anything after it.
+- **Truncation is detected** from the generator's token statistics, or from unclosed braces. The error then says how to shorten the reply: compact single-line JSON, short sentences, at most 8 values per parameter.
+- **Other JSON errors show the text near the problem** and say what to check (commas, closed quotes and brackets) instead of a character position.
+- **The default `--max-new-tokens` went from 320 to 512.** Generation still stops at the end of the JSON, so this only caps runaway replies.
+- **The prompt asks for exactly one compact, single-line JSON object.** Search guidance is now 5–8 values per parameter (was 5–10), to keep replies shorter.
+- **After a duplicate,** the retry re-sends the original request with a note naming the repeated experiment, without showing Qwen its copied reply.
 
 ## 2026-09-30: Research-quality fixes after the first CUDA runs
 

@@ -53,7 +53,7 @@ def search_guidance(max_candidates: int) -> str:
     With a fast backend (large budget) a wide grid costs almost nothing and makes the parameter
     sensitivity informative; the multiple-testing warning and validation retest guard against luck.
     """
-    values = "5-10" if max_candidates >= 5000 else "4-8" if max_candidates >= 500 else "3-5"
+    values = "5-8" if max_candidates >= 5000 else "4-7" if max_candidates >= 500 else "3-5"
     return (f"The engine tests every combination, up to {max_candidates} per hypothesis (the product of the "
             f"list lengths must not exceed it). Use {values} values per swept parameter spanning a WIDE range: "
             "lookbacks from a few hours to several weeks (e.g. 6 to 720) and thresholds across the feature's "
@@ -80,7 +80,8 @@ Format example (structure only; do NOT reuse its idea or values):
 {json.dumps(EXAMPLE_PROPOSAL, separators=(",", ":"))}
 
 Rules:
-- Output JSON only. No Python, no CUDA, no markdown, no explanations outside the JSON.
+- Output exactly ONE compact JSON object on a single line (no indentation), and nothing before or after it. \
+No Python, no CUDA, no markdown, no explanations.
 - Use only the features, fields, operators and logic listed above. Do not invent new ones.
 - Features only use current and past bars; do not try to use future information.
 - Propose ONE testable hypothesis; hypothesis and rationale are one short sentence each.
