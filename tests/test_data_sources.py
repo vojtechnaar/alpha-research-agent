@@ -63,3 +63,4 @@ def test_run_metrics(tmp_path: Path, settings: ExperimentSettings) -> None:
     table = totals(pd.DataFrame([row, {**row, "run": "b"}]))
     assert table.loc[0, "runs"] == 2 and table.loc[0, "llm_calls"] == 4
     assert runs_main([str(tmp_path)]) == 0
+    assert runs_main([str(tmp_path), "--datasets", "GLD"]) == 0  # no matching runs: handled

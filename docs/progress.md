@@ -14,6 +14,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
   - idea families per run: 1–3 → 7–8
 
   About 2.9 useful experiments per 10 calls is the base-model baseline a LoRA has to beat.
+- **Research data collected:** 632 completed experiments on BTC (hourly) and SPY, QQQ and TLT (daily), 0 crashes. First-try valid rate is 54–65% per market, and useful experiments per 10 LLM calls range from 1.5 (BTC) to 2.7 (QQQ). About a third of all LLM calls were rejected repeats (289 duplicates, 99 exhausted idea families), the clearest thing for LoRA to improve.
 
 ## Problems and fixes
 
@@ -83,6 +84,10 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → `python -m src.data.download_yahoo` adds daily, split- and dividend-adjusted bars for stocks (SPY, QQQ), bonds (TLT), gold (GLD) and FX (EURUSD) in the same format. The momentum benchmark was renamed `naive_momentum_24` (bars, not hours).
 31. **Research runs were treated as disposable,** but they're the LoRA training data.
     → Every run is kept in `data/research_runs/` (git-ignored; full train tables only with `--save-sweeps`, to save disk). `python -m src.research.runs` measures every run (efficiency, research quality, diversity, mistakes), which is the baseline a LoRA must beat.
+32. **"Beats buy-and-hold" was misleading on bonds.** TLT's buy-and-hold lost money over 2019–2022, so almost anything "beat" it.
+    → Beating buy-and-hold only counts when buy-and-hold itself was profitable.
+33. **The LoRA must not learn from bad examples.** The records also contain failed ideas, unit mistakes and hypotheses that contradict their rules.
+    → `python -m src.models.lora_data` keeps only good research steps: useful, no unit problems, text consistent with the long/short rule, no repeats. ETH and GLD are always held out. The target is the validated proposal as compact JSON. `python -m src.models.train_lora` trains a LoRA adapter (frozen bf16 base, loss on the proposal only, best validation loss kept), and `--adapter` runs the research loop with it.
 
 ## Still open
 
@@ -94,7 +99,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
 ## Plan: LoRA
 
-1. **Collect research data (now).** Run the loop on several markets: BTC and ETH hourly; SPY, QQQ and TLT daily. Every run is kept in `data/research_runs/`. Target several hundred completed experiments. Keep **ETH and GLD held out**: they are never used for LoRA training, so the comparison below is fair.
+1. **Collect research data: done.** 632 experiments on BTC, SPY, QQQ and TLT are saved in `data/research_runs/`. **ETH and GLD are held out**: never used for LoRA training, so the comparison below is fair.
 2. **Build the training set.** Pairs of (the context Qwen saw → the proposal it wrote), keeping only good research steps:
    - valid on the first try
    - a hypothesis that matches the rule
@@ -103,7 +108,8 @@ What had to be fixed along the way, and how. The design itself is in [architectu
    - not buy-and-hold in disguise, not a repeat
 
    Failed and rejected attempts stay in the records for analysis, and could later be used for preference training.
-3. **Train** a LoRA adapter (PEFT) for Qwen3-8B on one A6000.
+   Built: `python -m src.models.lora_data`.
+3. **Train** a LoRA adapter (PEFT) for Qwen3-8B on one A6000. Built: `python -m src.models.train_lora`.
 4. **Measure base vs LoRA:**
    - **Setup:** the same held-out markets (ETH, GLD), the same settings, and the same number of runs with the same seeds for both models (e.g. 5 runs × 10 hypotheses each). Compare runs in pairs by seed.
    - **Primary metric,** fixed in advance: *useful experiments per 10 LLM calls* (from `python -m src.research.runs`).

@@ -49,6 +49,7 @@ class QwenGenerator:
         self,
         model_id: str = "Qwen/Qwen3-8B",
         device: str | None = None,
+        adapter: str | None = None,
         enable_thinking: bool = False,
         max_new_tokens: int = 1024,
         temperature: float = 0.7,
@@ -60,16 +61,21 @@ class QwenGenerator:
         device = device or os.environ.get("QWEN_DEVICE", "cuda:0")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, device_map={"": device})
+        if adapter:  # LoRA: the frozen base weights plus the trained low-rank corrections
+            from peft import PeftModel
+
+            self.model = PeftModel.from_pretrained(self.model, adapter)
         self.model.eval()
         self.enable_thinking = enable_thinking
         sampling = dict(do_sample=True, temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 \
             else dict(do_sample=False)
         self.generation_kwargs = dict(max_new_tokens=max_new_tokens, **sampling)
         self.top_p, self.top_k = top_p, top_k
-        self.settings = {"model_id": model_id, "device": device, "enable_thinking": enable_thinking,
-                         **self.generation_kwargs}
+        self.settings = {"model_id": model_id, "device": device, "adapter": adapter,
+                         "enable_thinking": enable_thinking, **self.generation_kwargs}
         self.last_stats: dict[str, float] = {}
-        print(f"Loaded {model_id} on {device} in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
+        print(f"Loaded {model_id}{f' + LoRA {adapter}' if adapter else ''} on {device} "
+              f"in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
 
     def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None,
                  temperature: float | None = None) -> list[str]:

@@ -2,6 +2,7 @@
 
     python -m src.research.runs                      # every run in data/research_runs/
     python -m src.research.runs data/research_runs --by model
+    python -m src.research.runs --by model --datasets ETH/USD GLD   # base vs LoRA on held-out markets
 
 These are the metrics for "is Qwen + LoRA a better researcher than base Qwen?" (see docs/progress.md).
 Collecting base-model runs now builds the baseline that a LoRA adapter has to beat.
@@ -53,7 +54,9 @@ def experiment_flags(record: ExperimentRecord) -> dict[str, bool]:
     trades_enough = rows["validation_annual_turnover"].median() >= (record.min_trades_per_year or 0)
     flags["useful"] = flags["holds_up"] and trades_enough and not near_buy_and_hold
     buy_and_hold = record.benchmarks.get("validation", {}).get("buy_and_hold", {}).get("sharpe")
-    flags["beats_buy_and_hold"] = flags["useful"] and buy_and_hold is not None and median > buy_and_hold
+    # Only meaningful when buy-and-hold itself made money (e.g. bonds in 2022 did not: flat would "beat" it).
+    flags["beats_buy_and_hold"] = (flags["useful"] and buy_and_hold is not None and buy_and_hold > 0
+                                   and median > buy_and_hold)
     return flags
 
 
@@ -116,11 +119,14 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Summarise saved research runs.")
     p.add_argument("runs_dir", type=Path, nargs="?", default=DEFAULT_RUNS_DIR)
     p.add_argument("--by", default="model", choices=["model", "dataset"])
+    p.add_argument("--datasets", nargs="+", help="only runs on these markets (e.g. the held-out ETH/USD GLD)")
     args = p.parse_args(argv)
     if not args.runs_dir.exists():
         print(f"No runs yet in {args.runs_dir}")
         return 0
     table = summarize_runs(args.runs_dir)
+    if args.datasets and not table.empty:
+        table = table[table["dataset"].isin(args.datasets)]
     if table.empty:
         print(f"No runs yet in {args.runs_dir}")
         return 0

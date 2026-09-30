@@ -285,6 +285,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="show the LLM train results only (keeps validation blind)")
     p.add_argument("--model-id", default="Qwen/Qwen3-8B")
     p.add_argument("--device", help="e.g. cuda:2 (default: $QWEN_DEVICE or cuda:0)")
+    p.add_argument("--adapter", help="LoRA adapter directory, e.g. checkpoints/lora/v1 (default: base model)")
     p.add_argument("--max-new-tokens", type=int, default=512,
                    help="generation stops at the end of the JSON; this only caps runaway replies")
     p.add_argument("--temperature", type=float, default=0.7, help="0 = greedy decoding")
@@ -328,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from src.models.llm import QwenGenerator  # imported lazily: tests and replays need no torch
 
-        generator = QwenGenerator(args.model_id, device=args.device, max_new_tokens=args.max_new_tokens,
+        generator = QwenGenerator(args.model_id, device=args.device, adapter=args.adapter,
+                                  max_new_tokens=args.max_new_tokens,
                                   temperature=args.temperature, top_p=args.top_p, top_k=args.top_k)
 
     system = build_system_prompt(data, settings)

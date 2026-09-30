@@ -5,7 +5,8 @@ PyYAML>=6.0
 yfinance>=0.2.50   # daily stock/bond/gold/FX bars (src/data/download_yahoo.py)
 pytest>=8
 
-# LLM inference (src/models/llm.py; LoRA/peft will be added with the training milestone)
+# LLM inference and LoRA fine-tuning (src/models/)
 torch>=2.4
 transformers>=4.56
 accelerate>=1.0
+peft>=0.17          # LoRA fine-tuning (src/models/train_lora.py) and --adapter

@@ -54,6 +54,12 @@ python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypo
 python -m src.research.report data/research_runs/<run_id>/experiments.jsonl   # review a run
 python -m src.research.runs                                                    # metrics of all saved runs
 
+# LoRA: build the training set from saved runs (ETH and GLD held out), train, compare
+python -m src.models.lora_data
+python -m src.models.train_lora --device cuda:0 --name v1
+python -m src.agents.research --data data/raw/yahoo_GLD_1d.parquet ... --adapter checkpoints/lora/v1
+python -m src.research.runs --by model                                         # base vs LoRA
+
 # Confirm chosen experiments without the LLM: on another asset, then ONCE on the final test (2025+)
 python -m src.research.confirm data/research_runs/<run_id>/experiments.jsonl --experiments 3 6 \
     --data data/raw/bitstamp_ETH-USD_1h.parquet --backend cuda
