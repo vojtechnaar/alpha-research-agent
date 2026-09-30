@@ -172,15 +172,22 @@ make -C cuda cpu OMP=1    # C++ CPU backend (OpenMP, all cores) -> cuda/build/li
 
 **Adding a feature to the registry** also needs a `case` in `feature_value` and an entry in `FEATURE_CODES`. Until then the native backends raise `NotImplementedError` for it, and a test checks the code tables stay in sync.
 
-**Measured so far** (September 2026):
-- **Python:** about 25 ms per candidate on DeepDish, for 52k hourly bars.
-- **C++ single-threaded:** about 40× faster than Python on a laptop, on synthetic data.
-- **CUDA:** measure it on DeepDish with:
+**Measured on DeepDish4** (30 September 2026). BTC/USD hourly bars from 2017-01-01 to 2023-01-01 (about 52k bars), the 5,600-candidate `momentum_low_volatility_dense.json` sweep, cost 10 bps:
+
+| Backend | ms / candidate | Full sweep | Speed-up vs pandas | Max metric diff vs Python | Trade-count mismatches |
+|---|---|---|---|---|---|
+| Python (pandas) | 28.5 | ~160 s (extrapolated from 200) | 1× | reference | reference |
+| C++, OpenMP 32 threads | 0.175 | 0.98 s | 163× | 1.8e-12 | 0 |
+| CUDA, RTX A6000 | 0.045 | 0.25 s | 635× | 1.8e-12 | 0 |
+
+The GPU time includes the Python-side compilation of the candidates, the host↔device transfers and building the result table. At 5,600 candidates the GPU is far from saturated, so larger sweeps should widen the gap over the CPU.
+
+Reproduce with:
 
 ```bash
 python -m src.backends.benchmark --data data/raw/bitstamp_BTC-USD_1h.parquet \
     --strategy configs/strategies/momentum_low_volatility.json \
-    --space configs/sweeps/momentum_low_volatility_dense.json --backends python cpp cuda
+    --space configs/sweeps/momentum_low_volatility_dense.json --device 0
 ```
 
 The benchmark also reports the maximum metric difference and trade-count mismatches against Python on the same candidates.

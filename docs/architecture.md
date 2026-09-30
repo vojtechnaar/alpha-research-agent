@@ -151,7 +151,7 @@ A record holds the following, and never any time series (a typical record is a f
 - **Correctness first, then CUDA.** Everything above the backend depends only on the `evaluate_candidates` contract (`CandidateEvaluator` in `sweep.py`): data, candidates, costs and a period in; one metrics row per candidate out. The C++ and CUDA backends (`src/backends/`) implement the same contract, so choosing one is just `--backend cuda`. Nothing else changes: not the StrategySpec, the LLM, the records, the validation logic or the reporting. `tests/test_native_backend.py` requires them to match the Python engine (every feature × operator, AND/OR, all position combinations, benchmarks, price gaps, flat prices, zero volume), and `python -m src.backends.benchmark` compares speed and results on real data. Every record includes `timing.backend` and `ms_per_train_candidate`.
 - **The loop has explicit limits.** See the stopping rules above.
 
-**Python baseline** (the reference for the future speed-up), measured on DeepDish in September 2026 on BTC/USD hourly bars from 2017-01-01 to 2023-01-01 (about 52,000 bars): a 300-candidate sweep took 7.5 s, about 25 ms per candidate on one CPU core with pandas.
+**Measured speed-up** (DeepDish4, 30 September 2026, BTC/USD hourly bars from 2017 to 2022, a 5,600-candidate sweep): pandas takes 28.5 ms per candidate, C++ with 32 OpenMP threads 0.175 ms (163×), and CUDA on an RTX A6000 0.045 ms (635×). The results are identical: 0 trade-count mismatches and at most 1.8e-12 metric difference. Details are in `docs/strategy_engine.md`.
 
 ## Avoiding false discoveries
 
