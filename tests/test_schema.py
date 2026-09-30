@@ -89,8 +89,9 @@ def test_invalid_specs_are_rejected_with_code(path: tuple, value: object, code: 
 def test_returns_feature_takes_no_lookback() -> None:
     cond = {"feature": "returns", "field": "close", "operator": ">", "threshold": 0}
     StrategySpec.from_dict({"name": "r", "conditions": [cond]})
-    with pytest.raises(SpecError, match="no lookback"):
+    with pytest.raises(SpecError, match="no lookback") as info:
         StrategySpec.from_dict({"name": "r", "conditions": [{**cond, "lookback": 3}]})
+    assert "momentum with lookback N" in str(info.value)  # the error says how to fix it
 
 
 def test_malformed_json_is_invalid_spec() -> None:

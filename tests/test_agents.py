@@ -143,6 +143,7 @@ def test_system_prompt_is_generated_from_registries(monkeypatch: pytest.MonkeyPa
     for op in (">", ">=", "<", "<=", "AND", "OR"):
         assert op in text
     assert "321" in text and "JSON only" in text and "No Python, no CUDA" in text
+    assert "returns: one-bar return" in text and "NO lookback" in text and "use momentum" in text
     json.loads(json.dumps(prompts.EXAMPLE_PROPOSAL))
     parse_proposal(json.dumps(prompts.EXAMPLE_PROPOSAL), 321)  # the example itself must be valid
 
@@ -265,3 +266,16 @@ def test_cli_runs_with_native_backend_when_built(tmp_path: Path) -> None:
     assert json.loads((run_dir / "run.json").read_text())["backend"]["name"] == "cpp"
     (record,) = load_records(run_dir / "experiments.jsonl")
     assert record.status == "completed" and record.timing["backend"] == "cpp"
+
+
+def test_returns_with_lookback_is_repaired_using_the_error_hint(settings: ExperimentSettings, tmp_path: Path) -> None:
+    bad = proposal(strategy={"name": "r", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}]},
+        parameter_space={"r.lookback": [12, 24]})
+    good = proposal(strategy={"name": "r", "conditions": [
+        {"id": "r", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}]},
+        parameter_space={"r.lookback": [12, 24]})
+    generator = FakeGenerator([json.dumps(bad), json.dumps(good)])
+    (record,) = run(generator, settings, tmp_path, hypotheses=1)
+    assert record.status == "completed"
+    assert "use momentum with lookback N" in generator.calls[1][-1]["content"]  # the repair prompt carries the hint

@@ -91,7 +91,8 @@ class FeatureDef:
 
 FEATURE_REGISTRY: dict[str, FeatureDef] = {
     "returns": FeatureDef(
-        compute_returns, uses_lookback=False, description="one-bar return",
+        compute_returns, uses_lookback=False,
+        description="one-bar return x[t]/x[t-1]-1 (for the return over N bars use momentum with lookback N)",
         threshold_hint="fraction; hourly crypto returns are mostly within +/-0.01",
     ),
     "momentum": FeatureDef(

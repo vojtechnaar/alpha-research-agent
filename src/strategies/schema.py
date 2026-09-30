@@ -267,7 +267,9 @@ def _validate_condition(c: Condition) -> None:
     definition = FEATURE_REGISTRY[c.feature]
     if not definition.uses_lookback:
         if c.lookback is not None:
-            raise SpecError(INVALID_SPEC, f"{where}: feature {c.feature!r} takes no lookback")
+            raise SpecError(INVALID_SPEC, f"{where}: feature {c.feature!r} takes no lookback: remove the "
+                                          f"'lookback' key and any '{c.key}.lookback' parameter "
+                                          f"({c.feature} = {definition.description})")
         return
     lb = c.lookback
     if isinstance(lb, bool) or not isinstance(lb, int) or not definition.min_lookback <= lb <= MAX_LOOKBACK:

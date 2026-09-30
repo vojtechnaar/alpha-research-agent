@@ -34,7 +34,8 @@ def available_primitives() -> str:
     """The allowed features, operators and logic, straight from the registries."""
     features = []
     for name, d in FEATURE_REGISTRY.items():
-        lookback = f"lookback >= {d.min_lookback}" if d.uses_lookback else "no lookback"
+        lookback = (f"lookback >= {d.min_lookback}" if d.uses_lookback
+                    else "NO lookback: omit the lookback key and never sweep its lookback")
         features.append(f"- {name}: {d.description}; {lookback}; threshold: {d.threshold_hint}")
     return (
         "AVAILABLE FEATURES (feature(field, lookback)):\n" + "\n".join(features) + "\n"
