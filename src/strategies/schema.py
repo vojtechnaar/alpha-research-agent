@@ -38,6 +38,7 @@ INVALID_SPEC = "INVALID_SPEC"
 MALFORMED_JSON = "MALFORMED_JSON"
 SEARCH_SPACE_TOO_LARGE = "SEARCH_SPACE_TOO_LARGE"
 DUPLICATE_PROPOSAL = "DUPLICATE_PROPOSAL"
+FAMILY_EXHAUSTED = "FAMILY_EXHAUSTED"  # the same idea (rules without parameter values) was tested too often
 
 POSITION_NAMES = {1: "long", 0: "flat", -1: "short"}
 
@@ -72,6 +73,10 @@ class Condition:
     def key(self) -> str:
         """Identifier used in parameter names and result columns."""
         return self.id or self.feature
+
+    def describe_family(self) -> str:
+        """Readable form without parameter values, e.g. 'momentum(close) > x'."""
+        return f"{self.feature}({self.field}) {self.operator} x"
 
     def describe(self) -> str:
         """Readable form, e.g. 'momentum(close, 24) > 0.02'."""
@@ -140,6 +145,21 @@ class StrategySpec:
         return json.dumps({"conditions": conditions, "logic": self.logic if len(conditions) > 1 else "AND",
                            "true_position": self.true_position, "false_position": self.false_position},
                           sort_keys=True)
+
+    def family(self) -> str:
+        """The idea without its parameter values: which features, fields and comparison directions,
+        combined how, with which long/short rule. Refining lookbacks or thresholds keeps the family;
+        changing a feature, a direction or the position rule makes a new one."""
+        conditions = sorted(json.dumps({"feature": c.feature, "field": c.field, "operator": c.operator},
+                                       sort_keys=True) for c in self.conditions)
+        return json.dumps({"conditions": conditions, "logic": self.logic if len(conditions) > 1 else "AND",
+                           "true_position": self.true_position, "false_position": self.false_position},
+                          sort_keys=True)
+
+    def describe_family(self) -> str:
+        """Readable family, e.g. 'short if volatility(close) > x AND returns(close) < x, else flat'."""
+        rule = f" {self.logic} ".join(c.describe_family() for c in self.conditions) or "always"
+        return f"{POSITION_NAMES[self.true_position]} if {rule}, else {POSITION_NAMES[self.false_position]}"
 
     def describe(self) -> str:
         """Readable rule, e.g. 'long if momentum(close, 24) > 0.02 AND ..., else flat'."""

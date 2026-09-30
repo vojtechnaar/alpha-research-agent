@@ -13,6 +13,9 @@ One iteration:
 
 Stopping: after N iterations, or earlier when `max_consecutive_rejections` proposals in a row
 were invalid even after retries. A rejected proposal uses up its iteration. There is no other loop.
+
+Against repetition: an idea family (same rules, any parameter values) may be tested at most
+`max_per_family` times, and retries after a repeat are sampled at a higher temperature.
 """
 
 from __future__ import annotations
@@ -38,7 +41,14 @@ from src.research.experiment import ExperimentSettings, Period, run_experiment
 from src.research.feature_ranges import feature_ranges
 from src.research.records import ExperimentRecord, add_results, append_record, new_record
 from src.research.report import format_record
-from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError, StrategySpec
+from src.strategies.schema import (
+    DUPLICATE_PROPOSAL,
+    FAMILY_EXHAUSTED,
+    MALFORMED_JSON,
+    ResearchProposal,
+    SpecError,
+    StrategySpec,
+)
 from src.strategies.sweep import CandidateEvaluator, evaluate_candidates
 
 MAX_HYPOTHESES = 100  # guard against typos like --hypotheses 5000
@@ -48,7 +58,9 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "experiments"
 class Generator(Protocol):
     """QwenGenerator, a replay of saved proposals, or a fake in tests."""
 
-    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None) -> list[str]: ...
+    def generate(
+        self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None, temperature: float | None = None
+    ) -> list[str]: ...
 
 
 @dataclass(frozen=True)
@@ -59,14 +71,18 @@ class LoopSettings:
     recent_experiments: int = 2
     include_validation_in_feedback: bool = True
     seed: int | None = 42
+    max_per_family: int = 2  # experiments per idea family (same rules, any parameter values)
+    retry_temperatures: tuple[float, ...] = (1.0, 1.3)  # sampling temperature for retries after a repeat
 
     def __post_init__(self) -> None:
         if not 1 <= self.hypotheses <= MAX_HYPOTHESES:
             raise ValueError(f"hypotheses must be in 1..{MAX_HYPOTHESES}")
         if not 0 <= self.max_proposal_retries <= 5:
             raise ValueError("max_proposal_retries must be in 0..5")
-        if self.max_consecutive_rejections < 1 or self.recent_experiments < 1:
-            raise ValueError("max_consecutive_rejections and recent_experiments must be >= 1")
+        if self.max_consecutive_rejections < 1 or self.recent_experiments < 1 or self.max_per_family < 1:
+            raise ValueError("max_consecutive_rejections, recent_experiments and max_per_family must be >= 1")
+        if not self.retry_temperatures or any(t <= 0 for t in self.retry_temperatures):
+            raise ValueError("retry_temperatures must be positive")
 
 
 def request_proposal(
@@ -77,31 +93,39 @@ def request_proposal(
     max_retries: int,
     seed: int | None,
     tested: Mapping[str, str] | None = None,
+    families: Mapping[str, list[str]] | None = None,
+    max_per_family: int | None = None,
+    retry_temperatures: tuple[float, ...] = (1.0, 1.3),
 ) -> tuple[ResearchProposal | None, list[dict[str, Any]], SpecError | None]:
     """Ask for a proposal; on a validation error, show the error and ask for a repair.
 
     Makes at most 1 + max_retries LLM calls. Returns (proposal or None, attempts, last error).
     A reply that hit the token limit is reported as truncated (with how to shorten it). After a
-    duplicate, the model's copied reply is NOT kept in the conversation (a small model tends to
-    repeat the last JSON it wrote); the original request is re-sent with a note instead.
+    repeat (duplicate, already-tested grid, exhausted idea family) the model's copied reply is NOT
+    kept in the conversation - a small model tends to repeat the last JSON it wrote - and the next
+    attempt is sampled at the next of `retry_temperatures` to break out of the repetition. Format
+    errors are retried at the normal temperature.
     """
     conversation = list(messages)
     attempts: list[dict[str, Any]] = []
     error: SpecError | None = None
     duplicate_notes: list[str] = []
+    temperature: float | None = None  # None = the generator's own setting
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
-        text = generator.generate(conversation, n=1, seed=None if seed is None else seed + attempt)[0]
+        text = generator.generate(conversation, n=1, seed=None if seed is None else seed + attempt,
+                                  temperature=temperature)[0]
         info = {"attempt": attempt, "response": text, "seconds": round(time.perf_counter() - started, 2),
-                **getattr(generator, "last_stats", {})}
+                "temperature": temperature, **getattr(generator, "last_stats", {})}
         try:
-            proposal = parse_proposal(text, max_candidates, seen, tested)
+            proposal = parse_proposal(text, max_candidates, seen, tested, families, max_per_family)
         except SpecError as exc:
             if exc.code == MALFORMED_JSON and info.get("hit_max_new_tokens"):
                 exc = SpecError(MALFORMED_JSON, TRUNCATED_HINT)
             error = exc
             attempts.append({**info, "error": str(exc), "code": exc.code})
-            if exc.code == DUPLICATE_PROPOSAL:
+            if exc.code in (DUPLICATE_PROPOSAL, FAMILY_EXHAUSTED):
+                temperature = retry_temperatures[min(len(duplicate_notes), len(retry_temperatures) - 1)]
                 duplicate_notes.append(f"NOTE: a previous reply was rejected: {exc}")
                 request = {"role": "user", "content": "\n\n".join([messages[-1]["content"], *duplicate_notes])}
                 conversation = [*messages[:-1], request]
@@ -136,15 +160,17 @@ def run_research(
     records: list[ExperimentRecord] = []
     seen: dict[str, str] = {}  # proposal key -> label of the experiment that ran it
     tested: dict[str, str] = {}  # identity of every backtested combination -> its experiment
+    families: dict[str, list[str]] = {}  # idea family -> experiments that tested it
     consecutive_rejections = 0
 
     for iteration in range(loop.hypotheses):
-        context = (feedback_message(records, loop.recent_experiments, loop.include_validation_in_feedback)
-                   if records else initial_request())
+        context = (feedback_message(records, loop.recent_experiments, loop.include_validation_in_feedback,
+                                    loop.max_per_family) if records else initial_request())
         messages = [{"role": "system", "content": system}, {"role": "user", "content": context}]
         seed = None if loop.seed is None else loop.seed + 1000 * iteration
         proposal, attempts, error = request_proposal(
-            generator, messages, settings.max_candidates, seen, loop.max_proposal_retries, seed, tested
+            generator, messages, settings.max_candidates, seen, loop.max_proposal_retries, seed, tested,
+            families, loop.max_per_family, loop.retry_temperatures,
         )
         common = dict(dataset=dataset, data_path=data_path, run_id=run_id, iteration=iteration,
                       llm={"context": context, "seed": seed, "attempts": attempts})
@@ -172,6 +198,7 @@ def run_research(
                 record.sweep_csv = str(csv_path)
                 for identity in candidate_identities(proposal):
                     tested.setdefault(identity, label)
+                families.setdefault(proposal.strategy.family(), []).append(f"experiment {iteration + 1}")
             except Exception as exc:  # recorded and reported; one bad experiment should not end the run
                 record.status, record.error = "failed", f"{type(exc).__name__}: {exc}"
 
@@ -200,7 +227,8 @@ class ReplayGenerator:
         self.replies = [item if isinstance(item, str) else json.dumps(item) for item in items]
         self.settings = {"replay": str(path)}
 
-    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None) -> list[str]:
+    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None,
+                 temperature: float | None = None) -> list[str]:
         return [self.replies.pop(0) if self.replies else "" for _ in range(n)]
 
 
@@ -222,7 +250,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--validation-end", default="2025-01-01", help="data from here on is never loaded (final test)")
     p.add_argument("--top", type=int, default=10, help="candidates retested on validation")
     p.add_argument("--selection-metric", default="sharpe")
-    p.add_argument("--min-train-trades", type=int, default=10)
+    p.add_argument("--min-trades-per-year", type=float, default=10.0,
+                   help="candidates trading less often are not selected; fewer validation trades are flagged")
     p.add_argument("--max-candidates", type=int, default=1000, help="max parameter combinations per hypothesis")
     p.add_argument("--transaction-cost", type=float, default=0.001, help="fraction per unit turnover (0.001 = 10 bps)")
     p.add_argument("--benchmarks-dir", type=Path, default=DEFAULT_BENCHMARKS_DIR)
@@ -231,6 +260,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-proposal-retries", type=int, default=2)
     p.add_argument("--max-consecutive-rejections", type=int, default=3)
     p.add_argument("--recent", type=int, default=2, help="experiments shown in detail in the feedback")
+    p.add_argument("--max-per-family", type=int, default=2,
+                   help="experiments allowed per idea family (same rules, any parameter values)")
     p.add_argument("--no-validation-feedback", action="store_true",
                    help="show the LLM train results only (keeps validation blind)")
     p.add_argument("--model-id", default="Qwen/Qwen3-8B")
@@ -253,10 +284,10 @@ def main(argv: list[str] | None = None) -> int:
             train=Period(args.train_start, args.train_end),
             validation=Period(args.validation_start, args.validation_end),
             transaction_cost=args.transaction_cost, top_n=args.top, selection_metric=args.selection_metric,
-            max_candidates=args.max_candidates, min_train_trades=args.min_train_trades,
+            max_candidates=args.max_candidates, min_trades_per_year=args.min_trades_per_year,
         )
         loop = LoopSettings(args.hypotheses, args.max_proposal_retries, args.max_consecutive_rejections,
-                            args.recent, not args.no_validation_feedback, args.seed)
+                            args.recent, not args.no_validation_feedback, args.seed, args.max_per_family)
     except ValueError as exc:
         print(f"Invalid settings: {exc}", file=sys.stderr)
         return 2

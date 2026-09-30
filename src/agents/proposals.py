@@ -9,7 +9,8 @@ import json
 import re
 from collections.abc import Mapping, Set
 
-from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError
+from src.strategies.features import FEATURE_REGISTRY
+from src.strategies.schema import DUPLICATE_PROPOSAL, FAMILY_EXHAUSTED, MALFORMED_JSON, ResearchProposal, SpecError
 from src.strategies.sweep import parameter_grid
 
 
@@ -51,6 +52,8 @@ def parse_proposal(
     max_candidates: int,
     seen: Mapping[str, str] | Set[str] | None = None,
     tested: Mapping[str, str] | None = None,
+    families: Mapping[str, list[str]] | None = None,
+    max_per_family: int | None = None,
 ) -> ResearchProposal:
     """Parse and fully validate a reply; reject experiments that would add nothing new.
 
@@ -58,6 +61,8 @@ def parse_proposal(
     ('...')"): an exact repeat is rejected, naming that experiment. `tested` maps the identity of
     every combination already backtested to its experiment: a proposal whose combinations were
     ALL tested before is rejected too. Partial overlap is allowed (a refinement adds new values).
+    `families` maps StrategySpec.family() to the experiments that tested it: once a family has
+    `max_per_family` experiments, further proposals of it are rejected (FAMILY_EXHAUSTED).
     """
     proposal = ResearchProposal.from_dict(extract_json(text), max_candidates=max_candidates)
     if seen is not None and proposal.key() in seen:
@@ -65,6 +70,15 @@ def parse_proposal(
         raise SpecError(DUPLICATE_PROPOSAL, f"this exact strategy and parameter space repeats {earlier}. Do not "
                                             "resubmit it: use different features or conditions, or clearly "
                                             "different parameter ranges.")
+    family = proposal.strategy.family()
+    if families and max_per_family and len(families.get(family, [])) >= max_per_family:
+        used = {json.loads(c)["feature"] for key in families for c in json.loads(key)["conditions"]}
+        untried = [name for name in FEATURE_REGISTRY if name not in used]
+        raise SpecError(FAMILY_EXHAUSTED, f"the idea '{proposal.strategy.describe_family()}' was already tested "
+                                          f"{len(families[family])} times ({', '.join(families[family])}); the limit "
+                                          f"is {max_per_family}. Propose a different idea: change the features, a "
+                                          "comparison direction or the long/short rule. Features not tried yet: "
+                                          f"{', '.join(untried) or 'none'}.")
     if tested:
         identities = candidate_identities(proposal)
         if all(identity in tested for identity in identities):

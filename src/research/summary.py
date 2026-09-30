@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.research.experiment import TRADE_SIGNATURE, ExperimentResult
+from src.research.experiment import TRADE_SIGNATURE, ExperimentResult, min_trades
 from src.strategies.sweep import summarize_sweep
 
 COST_WARNING_ANNUAL_COST = 0.05  # warn when fees exceed 5% of capital per year
@@ -119,8 +119,9 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
         warnings.append(f"Median train {metric} is {median_train:.2f}: the idea fails for most parameter values, "
                         "so the top results may be luck.")
     if not result.selected:
-        warnings.append(f"No candidate had >= {s.min_train_trades} train trades and a defined {metric}; "
-                        "nothing was validated.")
+        required = min_trades(train["n_bars"].iloc[0], s.min_trades_per_year, s.periods_per_year) if len(train) else 0
+        warnings.append(f"No candidate traded at least {s.min_trades_per_year:g} times per year on train "
+                        f"(>= {required:.0f} trades) with a defined {metric}; nothing was validated.")
         return warnings
 
     best = train.set_index("candidate").loc[result.selected[0]]
@@ -147,10 +148,12 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
     elif t is not None and v is not None and t > 0 and v < 0.5 * t:
         warnings.append(f"Top candidates kept less than half their train {metric} on validation "
                         f"(median {t:.2f} -> {v:.2f}): likely over-fit.")
-    few = int((table["validation_n_trades"] < s.min_train_trades).sum())
+    validation_bars = result.validation["n_bars"].iloc[0] if len(result.validation) else 0
+    required = min_trades(validation_bars, s.min_trades_per_year, s.periods_per_year)
+    few = int((table["validation_n_trades"] < required).sum())
     if few:
-        warnings.append(f"{few} of {len(table)} retested candidates traded fewer than {s.min_train_trades} "
-                        "times on validation; their metrics are unreliable.")
+        warnings.append(f"{few} of {len(table)} retested candidates traded less than {s.min_trades_per_year:g} times "
+                        f"per year on validation (< {required:.0f} trades); their validation metrics are unreliable.")
 
     bh = _benchmark_metric(result, "validation", "buy_and_hold", metric)
     if bh is not None and table[f"validation_{metric}"].notna().any():

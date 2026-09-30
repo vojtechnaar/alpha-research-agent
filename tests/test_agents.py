@@ -19,6 +19,7 @@ from src.strategies.schema import (
     DUPLICATE_PROPOSAL,
     INVALID_SPEC,
     MALFORMED_JSON,
+    FAMILY_EXHAUSTED,
     SEARCH_SPACE_TOO_LARGE,
     UNSUPPORTED_FEATURE,
     UNSUPPORTED_OPERATOR,
@@ -58,10 +59,12 @@ class FakeGenerator:
         self.replies = list(replies)
         self.calls: list[list[dict[str, str]]] = []
         self.seeds: list[int | None] = []
+        self.temperatures: list[float | None] = []
 
-    def generate(self, messages, n=1, seed=None):
+    def generate(self, messages, n=1, seed=None, temperature=None):
         self.calls.append(copy.deepcopy(messages))
         self.seeds.append(seed)
+        self.temperatures.append(temperature)
         return [self.replies.pop(0) if self.replies else "no json here"]
 
 
@@ -177,7 +180,7 @@ def test_feedback_is_compact_and_complete(settings: ExperimentSettings, tmp_path
 
 def test_loop_stops_after_n_hypotheses(settings: ExperimentSettings, tmp_path: Path) -> None:
     generator = FakeGenerator([variant([6, 24]), variant([24, 72]), variant([72, 168]), variant([168, 336])])
-    records = run(generator, settings, tmp_path, hypotheses=3)
+    records = run(generator, settings, tmp_path, hypotheses=3, max_per_family=10)  # one family on purpose
     assert len(records) == 3 and len(generator.calls) == 3
     assert [r.status for r in records] == ["completed"] * 3
     assert len(load_records(tmp_path / "experiments.jsonl")) == 3
@@ -248,7 +251,7 @@ def test_cli_replay_runs_without_llm(tmp_path: Path) -> None:
     replay.write_text(variant([6, 24]) + "\n")
     code = main(["--data", str(data_path), "--hypotheses", "1", "--replay", str(replay), "--output-dir", str(tmp_path / "out"),
                  "--train-start", "2020-01-01", "--train-end", "2020-03-15", "--validation-start", "2020-03-15",
-                 "--validation-end", "2020-05-01", "--min-train-trades", "1", "--transaction-cost", "0.002"])
+                 "--validation-end", "2020-05-01", "--min-trades-per-year", "1", "--transaction-cost", "0.002"])
     assert code == 0
     (run_dir,) = (tmp_path / "out").iterdir()
     run_info = json.loads((run_dir / "run.json").read_text())
@@ -278,7 +281,7 @@ def test_cli_runs_with_native_backend_when_built(tmp_path: Path) -> None:
     replay.write_text(variant([6, 24]) + "\n")
     assert main(["--data", str(data_path), "--hypotheses", "1", "--replay", str(replay), "--backend", "cpp",
                  "--output-dir", str(tmp_path / "out"), "--train-start", "2020-01-01", "--train-end", "2020-03-15",
-                 "--validation-start", "2020-03-15", "--validation-end", "2020-05-01", "--min-train-trades", "1"]) == 0
+                 "--validation-start", "2020-03-15", "--validation-end", "2020-05-01", "--min-trades-per-year", "1"]) == 0
     (run_dir,) = (tmp_path / "out").iterdir()
     assert json.loads((run_dir / "run.json").read_text())["backend"]["name"] == "cpp"
     (record,) = load_records(run_dir / "experiments.jsonl")
@@ -347,8 +350,8 @@ def test_feedback_shows_exploration_coverage(settings: ExperimentSettings, tmp_p
 
 def test_truncated_reply_is_reported_with_how_to_shorten_it(settings: ExperimentSettings, tmp_path: Path) -> None:
     class Truncating(FakeGenerator):
-        def generate(self, messages, n=1, seed=None):
-            reply = super().generate(messages, n, seed)
+        def generate(self, messages, n=1, seed=None, temperature=None):
+            reply = super().generate(messages, n, seed, temperature)
             self.last_stats = {"new_tokens": 512, "hit_max_new_tokens": len(self.calls) == 1}
             return reply
 
@@ -369,3 +372,42 @@ def test_feedback_shows_condition_activity_and_compact_search(settings: Experime
     assert "mom.lookback 6..168 (" in text  # long value lists are summarised
     assert "CONDITIONS (best train candidate, share of train bars where true): mom " in text
     assert record.requested_parameter_space == ranged["parameter_space"]
+
+
+def family_variant(lookbacks: list[int], hypothesis: str) -> str:
+    """Same idea family as PROPOSAL (momentum > x AND volatility < x, long/flat), different values."""
+    return json.dumps(proposal(hypothesis=hypothesis, parameter_space={"mom.lookback": lookbacks}))
+
+
+def test_idea_family_limit_allows_one_refinement_then_rejects(settings: ExperimentSettings, tmp_path: Path) -> None:
+    other = proposal(hypothesis="Rebound after sharp drops.", strategy={"name": "dip", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": "<", "threshold": -0.01}]},
+        parameter_space={"r.threshold": [-0.02, -0.01]})
+    generator = FakeGenerator([
+        family_variant([6, 24], "First try."),
+        family_variant([48, 96], "Refinement."),          # 2nd experiment of the family: allowed
+        family_variant([168, 336], "Third time."),        # 3rd: rejected (limit 2)
+        json.dumps(other),
+    ])
+    records = run(generator, settings, tmp_path, hypotheses=3, max_per_family=2)
+    assert [r.hypothesis for r in records] == ["First try.", "Refinement.", "Rebound after sharp drops."]
+    rejected = records[2].llm["attempts"][0]
+    assert rejected["code"] == FAMILY_EXHAUSTED
+    assert "already tested 2 times (experiment 1, experiment 2)" in rejected["error"]
+    assert "Features not tried yet: returns" in rejected["error"]
+    assert "ideas at the limit of 2 experiments (do NOT propose again): long if momentum(close) > x AND " \
+           "volatility(close) < x, else flat" in generator.calls[2][-1]["content"]
+
+
+def test_retries_after_repeats_use_higher_temperatures(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator([variant([6, 24]), variant([6, 24]), variant([6, 24]), variant([24, 72])])
+    records = run(generator, settings, tmp_path, hypotheses=2, max_proposal_retries=2)
+    assert generator.temperatures == [None, None, 1.0, 1.3]  # normal, normal, 1st retry, 2nd retry
+    assert records[1].status == "completed"
+    assert [a["temperature"] for a in records[1].llm["attempts"]] == [None, 1.0, 1.3]
+
+
+def test_format_errors_are_retried_at_the_normal_temperature(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator(["not json", json.dumps(PROPOSAL)])
+    run(generator, settings, tmp_path, hypotheses=1)
+    assert generator.temperatures == [None, None]

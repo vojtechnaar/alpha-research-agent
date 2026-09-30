@@ -30,5 +30,5 @@ def settings() -> ExperimentSettings:
     return ExperimentSettings(
         train=Period("2020-01-01", "2020-03-15"),
         validation=Period("2020-03-15", "2020-05-01"),
-        transaction_cost=0.001, top_n=3, min_train_trades=1,
+        transaction_cost=0.001, top_n=3, min_trades_per_year=1.0,
     )

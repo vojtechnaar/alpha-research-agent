@@ -33,6 +33,7 @@
 | `MALFORMED_JSON` | The reply isn't a parseable JSON object, or was cut off |
 | `SEARCH_SPACE_TOO_LARGE` | The parameter space's Cartesian product is over the candidate budget (explicit lists only; ranges are sized to fit) |
 | `DUPLICATE_PROPOSAL` | The same rules and parameter space were already tested, or every combination was already tested, in this run |
+| `FAMILY_EXHAUSTED` | The same idea family (features, directions, long/short rule; any parameter values) already has `max_per_family` experiments in this run |
 
 Examples are in `configs/strategies/` (research), `configs/benchmarks/` (benchmarks) and `configs/proposals/` (an LLM-format proposal).
 
@@ -118,7 +119,7 @@ summary = summarize_sweep(results)
 
 `run_experiment(data, base, space, settings, benchmarks)` in `src/research/experiment.py` runs these steps:
 1. Evaluate **all** candidates on TRAIN.
-2. Pick the top N by `selection_metric` (default Sharpe), using the train table only. Ties go to the lower candidate id, and candidates with fewer than `min_train_trades` trades aren't eligible.
+2. Pick the top N by `selection_metric` (default Sharpe), using the train table only. Ties go to the lower candidate id. Candidates trading less than `min_trades_per_year` times per year over the period aren't eligible, and neither are candidates that traded identically to a better-ranked one.
 3. Freeze those parameters and evaluate **only** them on VALIDATION.
 4. Evaluate the benchmarks on both periods with the same costs and the same backend.
 5. Return the train table, the selected ids, the validation table, a side-by-side comparison and the benchmark tables.

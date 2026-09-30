@@ -65,22 +65,31 @@ class QwenGenerator:
         sampling = dict(do_sample=True, temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 \
             else dict(do_sample=False)
         self.generation_kwargs = dict(max_new_tokens=max_new_tokens, **sampling)
+        self.top_p, self.top_k = top_p, top_k
         self.settings = {"model_id": model_id, "device": device, "enable_thinking": enable_thinking,
                          **self.generation_kwargs}
         self.last_stats: dict[str, float] = {}
         print(f"Loaded {model_id} on {device} in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
 
-    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None) -> list[str]:
-        """Sample `n` independent assistant replies to the chat `messages`."""
+    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None,
+                 temperature: float | None = None) -> list[str]:
+        """Sample `n` independent assistant replies to the chat `messages`.
+
+        `temperature` overrides the configured sampling temperature for this call (the research loop
+        raises it on retries after a repeated proposal).
+        """
         if seed is not None:
             torch.manual_seed(seed)
+        kwargs = dict(self.generation_kwargs)
+        if temperature is not None and temperature > 0:
+            kwargs.update(do_sample=True, temperature=temperature, top_p=self.top_p, top_k=self.top_k)
         text = self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=self.enable_thinking
         )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
         start = time.perf_counter()
         with torch.inference_mode():
-            output = self.model.generate(**inputs, num_return_sequences=n, **self.generation_kwargs)
+            output = self.model.generate(**inputs, num_return_sequences=n, **kwargs)
         seconds = time.perf_counter() - start
         prompt_len = inputs["input_ids"].shape[1]
         pad = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id

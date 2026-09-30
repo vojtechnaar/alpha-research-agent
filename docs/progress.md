@@ -54,9 +54,15 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → Only distinct strategies are retested.
 20. **Noisy "Mean of empty slice" warnings** appeared when nothing traded.
     → Guarded.
+21. **Qwen got stuck on one idea.** 7 of 10 hypotheses were "short when volatility is high and price drops". The duplicates were resubmitted on every retry, so 12 of 28 LLM calls were wasted.
+    → Each idea family (same features, directions and long/short rule, any parameter values) may be tested at most twice (`--max-per-family`). The rejection lists untried features, and the feedback lists ideas at the limit.
+22. **Retries repeated the same JSON,** because Qwen's output was too concentrated on one answer.
+    → Retries after a repeat are sampled at a higher temperature (0.7 → 1.0 → 1.3). Format errors are still retried at the normal temperature.
+23. **The "best" candidates barely traded.** For a losing idea, the variants that almost never trade look best, with Sharpe near 0 instead of negative. The top 10 then made 0 trades on validation. The old filter (10 trades in 6 years) was far too weak.
+    → Candidates must trade at least 10 times per year (`--min-trades-per-year`), i.e. 60 on train. Validation uses the same per-year rate to flag unreliable results.
 
 ## Still open
 
-- **Qwen's research judgement:** a short bias in a bull market, and repeating families of ideas. This is the target for LoRA fine-tuning on the collected experiment records.
+- **Qwen's research judgement:** a short bias in a bull market, and only a few idea families. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.
 - **Formal statistics:** Probabilistic/Deflated Sharpe, block bootstrap, multiple-testing corrections.
 - **Cross-asset and walk-forward validation** (discover on BTC, confirm on ETH), and an exposure-matched benchmark.

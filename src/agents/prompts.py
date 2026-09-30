@@ -157,31 +157,40 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
     return "\n".join(lines)
 
 
-def exploration_summary(records: list[ExperimentRecord]) -> str:
-    """Which features and position rules completed experiments have used, and which are untried."""
+def exploration_summary(records: list[ExperimentRecord], max_per_family: int | None = None) -> str:
+    """Features, position rules and idea families used by completed experiments, and what is untried."""
     features: Counter[str] = Counter()
     positions: Counter[str] = Counter()
+    families: Counter[str] = Counter()
     for r in records:
         if r.status != "completed" or not r.strategy_spec:
             continue
         features.update({c["feature"] for c in r.strategy_spec["conditions"]})  # once per experiment
         spec = r.strategy_spec
         positions[f"{POSITION_NAMES[spec['true_position']]}/{POSITION_NAMES[spec['false_position']]}"] += 1
+        families[StrategySpec.from_dict(spec).describe_family()] += 1
     untried = [name for name in FEATURE_REGISTRY if name not in features]
     counts = ", ".join(f"{name} x{n}" for name, n in features.most_common()) or "none"
     rules = ", ".join(f"{rule} x{n}" for rule, n in positions.most_common()) or "none"
-    return (f"EXPLORATION (completed experiments):\n  features used: {counts}\n"
-            f"  features not yet tried: {', '.join(untried) or 'none'}\n"
-            f"  position rules used (if true / otherwise): {rules}")
+    lines = ["EXPLORATION (completed experiments):", f"  features used: {counts}",
+             f"  features not yet tried: {', '.join(untried) or 'none'}",
+             f"  position rules used (if true / otherwise): {rules}"]
+    if max_per_family:
+        full = [family for family, n in families.items() if n >= max_per_family]
+        if full:
+            lines.append(f"  ideas at the limit of {max_per_family} experiments (do NOT propose again): "
+                         + "; ".join(full))
+    return "\n".join(lines)
 
 
-def feedback_message(records: list[ExperimentRecord], recent: int = 2, include_validation: bool = True) -> str:
+def feedback_message(records: list[ExperimentRecord], recent: int = 2, include_validation: bool = True,
+                     max_per_family: int | None = None) -> str:
     """Next user message: earlier hypotheses, exploration coverage, details for the most recent ones."""
     history = "\n".join(
         f"{i}. [{r.status}] {r.hypothesis or '(invalid proposal)'}" for i, r in enumerate(records, 1)
     )
     details = "\n\n".join(describe_experiment(r, include_validation) for r in records[-recent:])
-    return (f"PREVIOUS HYPOTHESES (do not repeat):\n{history}\n\n{exploration_summary(records)}\n\n"
+    return (f"PREVIOUS HYPOTHESES (do not repeat):\n{history}\n\n{exploration_summary(records, max_per_family)}\n\n"
             f"MOST RECENT RESULTS:\n{details}\n\n"
             "Propose ONE next research proposal as JSON: refine what the evidence clearly supports, or test a "
             "different idea (preferably with an untried feature or position rule). Do not simply chase the highest "

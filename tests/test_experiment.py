@@ -52,9 +52,18 @@ def test_select_top_ranks_on_train_only() -> None:
         "sharpe": [0.5, 1.2, np.nan, 1.2, 2.0],
         "n_trades": [50, 50, 50, 60, 3],
         "cumulative_return": [0.1, 0.3, 0.2, 0.4, 0.9],
+        "n_bars": [8760 * 2] * 5,  # two years
     })
     assert select_top(train, "sharpe", 3) == [4, 1, 3]
-    assert select_top(train, "sharpe", 3, min_trades=10) == [1, 3, 0]  # tie -> lower id first; NaN excluded
+    # 10 trades/year over 2 years -> at least 20 trades: candidate 4 (3 trades) is no longer eligible
+    assert select_top(train, "sharpe", 3, min_trades_per_year=10) == [1, 3, 0]  # tie -> lower id; NaN excluded
+
+
+def test_minimum_trade_frequency_scales_with_period_length() -> None:
+    from src.research.experiment import min_trades
+
+    assert min_trades(8760 * 6, 10) == 60  # six years of hourly bars
+    assert min_trades(8760 * 2, 10) == 20
 
 
 def test_select_top_skips_candidates_that_traded_identically() -> None:
@@ -100,11 +109,11 @@ def test_transaction_cost_reaches_every_evaluation(data: pd.DataFrame) -> None:
         return evaluate_candidates(*args, **kwargs)
 
     settings = ExperimentSettings(Period("2020-01-01", "2020-03-15"), Period("2020-03-15", "2020-05-01"),
-                                  transaction_cost=0.002, top_n=2, min_train_trades=1)
+                                  transaction_cost=0.002, top_n=2, min_trades_per_year=1.0)
     result = run_experiment(data, BASE, SPACE, settings, load_benchmarks(), evaluator=spy)
     assert calls and set(calls) == {20.0}  # train, validation and both benchmark periods
     free = run_experiment(data, BASE, SPACE, ExperimentSettings(settings.train, settings.validation, 0.0,
-                                                                top_n=2, min_train_trades=1))
+                                                                top_n=2, min_trades_per_year=1.0))
     assert (result.train["cumulative_return"] < free.train["cumulative_return"]).all()
 
 
@@ -207,3 +216,17 @@ def test_feature_ranges_use_only_the_training_period(data: pd.DataFrame, setting
     later = data.copy()
     later.loc[later.timestamp >= "2020-03-15", "close"] *= 10  # validation/test data must not matter
     assert feature_ranges(later, settings.train) == feature_ranges(data, settings.train)
+
+
+def test_rarely_trading_candidates_are_not_selected_and_flagged(data: pd.DataFrame) -> None:
+    # returns < t: a threshold of -0.03 fires only a handful of times, -0.005 fires often
+    rare = StrategySpec.from_dict({"name": "rare", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": "<", "threshold": -0.005}]})
+    space = {"r.threshold": [-0.03, -0.02, -0.005]}
+    strict = ExperimentSettings(Period("2020-01-01", "2020-03-15"), Period("2020-03-15", "2020-05-01"),
+                                top_n=3, min_trades_per_year=200.0)
+    result = run_experiment(data, rare, space, strict)
+    trades = result.train.set_index("candidate")["n_trades"]
+    required = 200.0 * result.train["n_bars"].iloc[0] / 8760
+    assert all(trades[i] >= required for i in result.selected)
+    assert (trades < required).any()  # some candidates were excluded for trading too rarely

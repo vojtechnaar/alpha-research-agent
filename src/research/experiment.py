@@ -64,14 +64,14 @@ class ExperimentSettings:
     top_n: int = 10
     selection_metric: str = "sharpe"
     max_candidates: int = DEFAULT_MAX_CANDIDATES
-    min_train_trades: int = 10
+    min_trades_per_year: float = 10.0  # below this a candidate barely trades and its metrics mean little
     periods_per_year: float = HOURS_PER_YEAR
 
     def __post_init__(self) -> None:
         if not 0 <= self.transaction_cost < MAX_TRANSACTION_COST:
             raise ValueError(f"transaction_cost must be in [0, {MAX_TRANSACTION_COST}), got {self.transaction_cost}")
-        if self.top_n < 1 or self.max_candidates < 1 or self.min_train_trades < 0:
-            raise ValueError("top_n and max_candidates must be >= 1, min_train_trades >= 0")
+        if self.top_n < 1 or self.max_candidates < 1 or self.min_trades_per_year < 0:
+            raise ValueError("top_n and max_candidates must be >= 1, min_trades_per_year >= 0")
         if self.selection_metric not in SELECTION_METRICS:
             raise ValueError(f"selection_metric must be one of {SELECTION_METRICS}")
         if self.train.end is None or self.validation.start is None:
@@ -102,14 +102,29 @@ class ExperimentResult:
     condition_activity: dict[str, Any]   # {"scope": ..., "shares": {condition id: share of train bars true}}
 
 
-def select_top(train: pd.DataFrame, metric: str, n: int, min_trades: int = 0, distinct: bool = True) -> list[int]:
+def min_trades(n_bars: int | float | pd.Series, min_trades_per_year: float,
+               periods_per_year: float = HOURS_PER_YEAR) -> float | pd.Series:
+    """Minimum number of trades for a period of `n_bars` bars at `min_trades_per_year`."""
+    return min_trades_per_year * n_bars / periods_per_year
+
+
+def select_top(
+    train: pd.DataFrame,
+    metric: str,
+    n: int,
+    min_trades_per_year: float = 0.0,
+    periods_per_year: float = HOURS_PER_YEAR,
+    distinct: bool = True,
+) -> list[int]:
     """Ids of the `n` best candidates by `metric` on TRAIN; ties go to the lower id.
 
-    Candidates with an undefined metric or fewer than `min_trades` trades are not eligible. With
+    Not eligible: an undefined metric, or fewer trades than `min_trades_per_year` over the period
+    (for a losing idea the "best" variants are otherwise those that almost never trade). With
     `distinct`, a candidate that traded identically to a better-ranked one is skipped, so the N
     validation slots go to N different strategies.
     """
-    eligible = train[(train["n_trades"] >= min_trades) & train[metric].notna()]
+    required = min_trades(train["n_bars"], min_trades_per_year, periods_per_year) if "n_bars" in train else 0.0
+    eligible = train[(train["n_trades"] >= required) & train[metric].notna()]
     ranked = eligible.sort_values([metric, "candidate"], ascending=[False, True])
     if distinct:
         ranked = ranked.drop_duplicates(subset=[c for c in TRADE_SIGNATURE if c in ranked], keep="first")
@@ -168,7 +183,8 @@ def run_experiment(
     train_seconds = time.perf_counter() - started
 
     # Selection sees only the train table. Parameters are frozen from here on.
-    selected = select_top(train, settings.selection_metric, settings.top_n, settings.min_train_trades)
+    selected = select_top(train, settings.selection_metric, settings.top_n, settings.min_trades_per_year,
+                          settings.periods_per_year)
     frozen = [candidates[i] for i in selected]
 
     started = time.perf_counter()

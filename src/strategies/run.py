@@ -63,7 +63,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--validation-end")
     p.add_argument("--top", type=int, default=10, help="candidates retested on validation")
     p.add_argument("--selection-metric", default="sharpe", choices=SELECTION_METRICS)
-    p.add_argument("--min-train-trades", type=int, default=10)
+    p.add_argument("--min-trades-per-year", type=float, default=10.0,
+                   help="candidates trading less often are not selected; fewer validation trades are flagged")
     cost = p.add_mutually_exclusive_group()
     cost.add_argument("--transaction-cost", type=float, help="fraction per unit turnover (default 0.001)")
     cost.add_argument("--cost-bps", type=float, help="basis points per unit turnover")
@@ -140,7 +141,7 @@ def _experiment(args: argparse.Namespace, spec: StrategySpec, space: dict, data:
         train=Period(args.start, args.end),
         validation=Period(args.validation_start, args.validation_end),
         transaction_cost=args.transaction_cost, top_n=args.top, selection_metric=args.selection_metric,
-        max_candidates=args.max_candidates, min_train_trades=args.min_train_trades,
+        max_candidates=args.max_candidates, min_trades_per_year=args.min_trades_per_year,
     )
     result = run_experiment(data, spec, space, settings, benchmarks, dataset, evaluator)
     record = new_record(settings, dataset=dataset, data_path=str(args.data), hypothesis=spec.description,

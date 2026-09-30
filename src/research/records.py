@@ -30,7 +30,8 @@ from src.research.summary import (
     summarize_validation,
 )
 
-SCHEMA_VERSION = 3  # v2 added `costs`; v3 `requested_parameter_space`, `condition_activity`. Older records load.
+SCHEMA_VERSION = 4  # v2 `costs`; v3 `requested_parameter_space`, `condition_activity`; v4 `min_trades_per_year`
+#                     (replaces min_train_trades). Older records still load; unknown/removed fields are ignored.
 STATUSES = ("completed", "rejected", "failed")  # rejected: invalid LLM proposal; failed: evaluation error
 
 
@@ -48,7 +49,7 @@ class ExperimentRecord:
     selection_metric: str = "sharpe"
     top_n: int | None = None
     max_candidates: int | None = None
-    min_train_trades: int | None = None
+    min_trades_per_year: float | None = None
     hypothesis: str = ""
     rationale: str = ""
     strategy_spec: dict[str, Any] | None = None
@@ -103,7 +104,7 @@ def new_record(settings: ExperimentSettings, status: str = "completed", **values
         selection_metric=settings.selection_metric,
         top_n=settings.top_n,
         max_candidates=settings.max_candidates,
-        min_train_trades=settings.min_train_trades,
+        min_trades_per_year=settings.min_trades_per_year,
         **values,
     )
 
