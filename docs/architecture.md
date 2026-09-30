@@ -59,7 +59,7 @@ python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypo
 
 1. **Build the context.** On the first iteration it's "no experiments yet". After that it's the compact feedback: one line per earlier hypothesis, an EXPLORATION block (features used so far, features not yet tried, position rules used), and details of the most recent `--recent` experiments. The system prompt's search guidance scales with the candidate budget: with a large budget, Qwen is asked for 5–10 values per parameter over wide ranges.
 2. **Ask Qwen for one proposal:** JSON with `hypothesis`, `rationale`, `strategy` and `parameter_space`. The system prompt includes each feature's typical values (5th percentile, median, 95th percentile) on the *training* period, so thresholds come out in the right units. Parameters are usually given as ranges, `{"min": a, "max": b}`.
-3. **Parse and validate it before anything runs.** Validation checks the JSON syntax, the features and operators against the registries, every parameter value, the size of the search (`SEARCH_SPACE_TOO_LARGE`), and exact repeats of experiments already run (`DUPLICATE_PROPOSAL`). The repeat check ignores names, condition ids and condition order, so renaming a condition doesn't get a repeat through. The same rules with *different* parameter ranges count as a refinement and are allowed. A rejection names the experiment that was repeated and says what to change.
+3. **Parse and validate it before anything runs.** First, known unambiguous mistakes are rewritten and recorded. Currently there's one: `returns` with a lookback N becomes `momentum` with lookback N, which is exactly equivalent. Then: Validation checks the JSON syntax, the features and operators against the registries, every parameter value, the size of the search (`SEARCH_SPACE_TOO_LARGE`), and exact repeats of experiments already run (`DUPLICATE_PROPOSAL`). The repeat check ignores names, condition ids and condition order, so renaming a condition doesn't get a repeat through. The same rules with *different* parameter ranges count as a refinement and are allowed. A rejection names the experiment that was repeated and says what to change.
 4. **Repair invalid replies (bounded).** The validator's error is shown to Qwen with a request to fix only the JSON. That's at most `--max-proposal-retries` extra calls (default 2), so at most 3 LLM calls per iteration. The parser takes the first complete JSON object and ignores anything after it. A reply that hit the token limit is reported as cut off, with instructions to shorten it. After a duplicate, the retry re-sends the original request with a note naming the repeated experiment, *without* Qwen's copied reply, because a small model tends to repeat the last JSON it wrote.
 5. **Generate the Cartesian product.** Ranges are expanded to fill the candidate budget: all ranges get the same number of values (up to 12), with lookbacks spaced geometrically and thresholds evenly. Explicit lists are kept as given. A proposal whose combinations were *all* tested earlier in the run is rejected. So is a third experiment of the same *idea family* (the same features, comparison directions and long/short rule, whatever the parameter values); `--max-per-family` sets the limit, default 2. The rejection lists the features not tried yet. Retries after any kind of repeat are sampled at a higher temperature (1.0, then 1.3) to break the model out of repetition.
 6. **Train sweep:** backtest every candidate on TRAIN.
@@ -195,6 +195,18 @@ The planned experiment compares **base Qwen3-8B** against **Qwen3-8B + quant LoR
 - validation and final-test performance
 - parameter stability
 - useful hypotheses per GPU-hour
+
+## Other markets
+
+The engine works on any OHLCV bars. The StrategySpec, the features (the `distance_to_*` ones are unit-free), the C++/CUDA backends, the train/validation logic, benchmarks, records and the LLM loop are all market-agnostic. The prompt names the market and bar length from the data, and shows typical feature values computed from the loaded training data.
+
+Per market you need to set:
+- **Data loader:** CCXT is crypto-only; write the same Parquet columns from another source.
+- **`--periods-per-year`:** 8,760 for hourly bars trading 24/7; about 1,640 for hourly stock bars; 252 for daily bars.
+- **`--transaction-cost`:** for that market.
+- **Price adjustments:** split/dividend-adjusted stock prices, or rolled futures contracts.
+- **Gaps:** overnight and weekend gaps make "the next bar's return" include the gap.
+- **Volume:** FX has no real volume, so avoid volume features there.
 
 ## GPU usage
 

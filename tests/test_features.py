@@ -8,6 +8,9 @@ import pytest
 
 from src.strategies.features import (
     FEATURE_REGISTRY,
+    compute_distance_to_max,
+    compute_distance_to_mean,
+    compute_distance_to_min,
     compute_momentum,
     compute_returns,
     compute_rolling_max,
@@ -82,3 +85,11 @@ def test_no_feature_uses_future_data(name: str) -> None:
     before = definition.compute(series, *args).iloc[:50]
     after = definition.compute(altered, *args).iloc[:50]
     pd.testing.assert_series_equal(before, after)
+
+
+def test_distance_features_are_relative_to_the_trailing_window() -> None:
+    assert values(compute_distance_to_max(S, 3)) == [None, None, 0.0, 0.0, -0.5]   # 4 at the 3-bar high 8
+    assert values(compute_distance_to_min(S, 3)) == [None, None, 3.0, 3.0, 0.0]    # 4 is the 3-bar low
+    assert values(compute_distance_to_mean(S, 2)) == [None, 1 / 3, 1 / 3, 1 / 3, -1 / 3]
+    # unit-free: scaling the price level does not change them
+    pd.testing.assert_series_equal(compute_distance_to_max(S * 1000, 3), compute_distance_to_max(S, 3))

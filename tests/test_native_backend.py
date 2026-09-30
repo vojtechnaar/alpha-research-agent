@@ -98,6 +98,9 @@ THRESHOLDS = {  # feature -> (field, lookbacks, thresholds)
     "rolling_min": ("close", [1, 24], [95.0]),
     "rolling_max": ("close", [12], [105.0]),
     "volume_change": ("volume", [1, 24], [0.0, 0.3]),
+    "distance_to_max": ("close", [1, 24], [-0.02, 0.0]),
+    "distance_to_min": ("close", [24, 100], [0.0, 0.02]),
+    "distance_to_mean": ("close", [2, 48], [-0.01, 0.01]),
 }
 
 

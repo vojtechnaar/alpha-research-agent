@@ -55,11 +55,17 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 20. **Noisy "Mean of empty slice" warnings** appeared when nothing traded.
     → Guarded.
 21. **Qwen got stuck on one idea.** 7 of 10 hypotheses were "short when volatility is high and price drops". The duplicates were resubmitted on every retry, so 12 of 28 LLM calls were wasted.
-    → Each idea family (same features, directions and long/short rule, any parameter values) may be tested at most twice (`--max-per-family`). The rejection lists untried features, and the feedback lists ideas at the limit.
+    → Each idea family (same features, directions and long/short rule, any parameter values) may be tested at most twice (`--max-per-family`). The rejection lists untried features, and the feedback lists ideas at the limit. Result in the next run: 0 duplicate rejections, 7 different idea families, 4 long and 4 short.
 22. **Retries repeated the same JSON,** because Qwen's output was too concentrated on one answer.
     → Retries after a repeat are sampled at a higher temperature (0.7 → 1.0 → 1.3). Format errors are still retried at the normal temperature.
 23. **The "best" candidates barely traded.** For a losing idea, the variants that almost never trade look best, with Sharpe near 0 instead of negative. The top 10 then made 0 trades on validation. The old filter (10 trades in 6 years) was far too weak.
     → Candidates must trade at least 10 times per year (`--min-trades-per-year`), i.e. 60 on train. Validation uses the same per-year rate to flag unreliable results.
+24. **Qwen kept giving `returns` a lookback,** even with the error explaining the fix. Two hypotheses were lost after 3 attempts each.
+    → The mistake is unambiguous (the return over N bars *is* `momentum` with lookback N), so it's now rewritten automatically before validation. The correction is recorded and shown to Qwen.
+25. **Qwen couldn't express "price near its recent high, low or average".** It tried fixed thresholds on price levels, e.g. `rolling_min(close) >= 0.95` (always true) and `rolling_max(close) > 9800` (meaningless when the price went from $1,000 to $90,000).
+    → Added three unit-free features, `distance_to_max`, `distance_to_min` and `distance_to_mean`, in Python and CUDA, parity-tested.
+26. **The prompt and hints were crypto-specific.**
+    → The wording is now asset-neutral. The market and bar length come from the data, typical values from the training period, and `--periods-per-year` sets the annualisation for other markets.
 
 ## Still open
 

@@ -44,6 +44,9 @@ enum Feature {
     F_ROLLING_MIN = 7,
     F_ROLLING_MAX = 8,
     F_VOLUME_CHANGE = 9,
+    F_DISTANCE_TO_MAX = 10,
+    F_DISTANCE_TO_MIN = 11,
+    F_DISTANCE_TO_MEAN = 12,
 };
 enum Operator { OP_GT = 1, OP_GE = 2, OP_LT = 3, OP_LE = 4 };
 enum Logic { LOGIC_AND = 1, LOGIC_OR = 2 };
@@ -149,6 +152,10 @@ HD double feature_value(int feature, const double* x, int L, long long t) {
             if (t < L) return qnan();
             return clean(x[t] / window_mean(raw, t - 1, L) - 1.0);
         }
+        // Distance of x[t] from its trailing max / min / mean (bar t included), as a fraction.
+        case F_DISTANCE_TO_MAX: return clean(x[t] / window_extreme(raw, t, L, true) - 1.0);
+        case F_DISTANCE_TO_MIN: return clean(x[t] / window_extreme(raw, t, L, false) - 1.0);
+        case F_DISTANCE_TO_MEAN: return clean(x[t] / window_mean(raw, t, L) - 1.0);
     }
     return qnan();
 }
@@ -261,7 +268,7 @@ static int check_problem(const Problem& p, int n_fields, int n_conds, char* erro
         return 2;
     }
     for (int b = 0; b < p.n_buffers; ++b) {
-        if (p.buf_feature[b] < F_RETURNS || p.buf_feature[b] > F_VOLUME_CHANGE || p.buf_field[b] < 0 ||
+        if (p.buf_feature[b] < F_RETURNS || p.buf_feature[b] > F_DISTANCE_TO_MEAN || p.buf_field[b] < 0 ||
             p.buf_field[b] >= n_fields || p.buf_lookback[b] < 0) {
             snprintf(error, error_len, "invalid feature buffer %d", b);
             return 2;

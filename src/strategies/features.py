@@ -78,6 +78,21 @@ def compute_volume_change(series: pd.Series, lookback: int) -> pd.Series:
     return _clean(series / compute_rolling_mean(series.shift(1), lookback) - 1)
 
 
+def compute_distance_to_max(series: pd.Series, lookback: int) -> pd.Series:
+    """x[t] / max of the last `lookback` values - 1. Always <= 0; 0 means a new `lookback`-bar high."""
+    return _clean(series / compute_rolling_max(series, lookback) - 1)
+
+
+def compute_distance_to_min(series: pd.Series, lookback: int) -> pd.Series:
+    """x[t] / min of the last `lookback` values - 1. Always >= 0; 0 means a new `lookback`-bar low."""
+    return _clean(series / compute_rolling_min(series, lookback) - 1)
+
+
+def compute_distance_to_mean(series: pd.Series, lookback: int) -> pd.Series:
+    """x[t] / mean of the last `lookback` values - 1, e.g. 0.02 = 2% above the trailing average."""
+    return _clean(series / compute_rolling_mean(series, lookback) - 1)
+
+
 @dataclass(frozen=True)
 class FeatureDef:
     """A registered feature: its implementation and the parameters it accepts."""
@@ -93,7 +108,7 @@ FEATURE_REGISTRY: dict[str, FeatureDef] = {
     "returns": FeatureDef(
         compute_returns, uses_lookback=False,
         description="one-bar return x[t]/x[t-1]-1 (for the return over N bars use momentum with lookback N)",
-        threshold_hint="fraction; hourly crypto returns are mostly within +/-0.01",
+        threshold_hint="fraction per bar, e.g. -0.01 = a 1% drop within one bar",
     ),
     "momentum": FeatureDef(
         compute_momentum, description="return over lookback bars",
@@ -101,15 +116,16 @@ FEATURE_REGISTRY: dict[str, FeatureDef] = {
     ),
     "rolling_mean": FeatureDef(
         compute_rolling_mean, description="trailing mean",
-        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+        threshold_hint="units of the field (a price level); fixed price thresholds rarely generalise, "
+                       "prefer distance_to_mean",
     ),
     "rolling_std": FeatureDef(
         compute_rolling_std, min_lookback=2, description="trailing sample std",
-        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+        threshold_hint="units of the field (price units); prefer volatility for a unit-free measure",
     ),
     "volatility": FeatureDef(
         compute_volatility, min_lookback=2, description="std of one-bar returns",
-        threshold_hint="per-bar std of returns, NOT annualised; hourly crypto is typically 0.003-0.012",
+        threshold_hint="per-bar std of returns, NOT annualised (a small fraction, see the typical values)",
     ),
     "zscore": FeatureDef(
         compute_zscore, min_lookback=2, description="(x - trailing mean) / trailing std",
@@ -117,14 +133,26 @@ FEATURE_REGISTRY: dict[str, FeatureDef] = {
     ),
     "rolling_min": FeatureDef(
         compute_rolling_min, description="trailing minimum",
-        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+        threshold_hint="units of the field (a price level); prefer distance_to_min",
     ),
     "rolling_max": FeatureDef(
         compute_rolling_max, description="trailing maximum",
-        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+        threshold_hint="units of the field (a price level); prefer distance_to_max",
     ),
     "volume_change": FeatureDef(
         compute_volume_change, description="x / mean of previous lookback values - 1",
         threshold_hint="fraction vs the recent average, e.g. 0.5 = 50% above it",
+    ),
+    "distance_to_max": FeatureDef(
+        compute_distance_to_max, description="x / trailing max - 1, always <= 0 (0 = at the lookback high)",
+        threshold_hint="fraction, e.g. -0.05 = 5% below the recent high; >= 0 means a new high (breakout)",
+    ),
+    "distance_to_min": FeatureDef(
+        compute_distance_to_min, description="x / trailing min - 1, always >= 0 (0 = at the lookback low)",
+        threshold_hint="fraction, e.g. 0.05 = 5% above the recent low; <= 0 means a new low",
+    ),
+    "distance_to_mean": FeatureDef(
+        compute_distance_to_mean, description="x / trailing mean - 1",
+        threshold_hint="fraction, e.g. 0.02 = 2% above the trailing average, -0.02 = 2% below",
     ),
 }

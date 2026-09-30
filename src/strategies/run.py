@@ -32,6 +32,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.backends import BACKENDS, get_evaluator
+from src.backtest.metrics import HOURS_PER_YEAR
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, evaluate_benchmarks, load_benchmarks
 from src.research.experiment import SELECTION_METRICS, ExperimentSettings, Period, run_experiment
 from src.research.records import add_results, append_record, new_record
@@ -69,6 +70,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     cost.add_argument("--transaction-cost", type=float, help="fraction per unit turnover (default 0.001)")
     cost.add_argument("--cost-bps", type=float, help="basis points per unit turnover")
     p.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
+    p.add_argument("--periods-per-year", type=float, default=HOURS_PER_YEAR,
+                   help="bars per year for annualising (8760 = hourly 24/7; e.g. 252 for daily stock bars)")
     p.add_argument("--benchmarks-dir", type=Path, default=DEFAULT_BENCHMARKS_DIR)
     p.add_argument("--backend", choices=BACKENDS, default="python")
     p.add_argument("--backtest-device", type=int, help="GPU index for --backend cuda")
@@ -111,9 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     period = Period(args.start, args.end)
-    table = evaluator(data, [({}, spec)], cost_bps, start=period.start, end=period.end, dataset=dataset)
+    table = evaluator(data, [({}, spec)], cost_bps, args.periods_per_year, start=period.start, end=period.end,
+                      dataset=dataset)
     table.insert(1, "strategy", spec.name)
-    bench = evaluate_benchmarks(data, benchmarks, period, evaluator=evaluator, cost_bps=cost_bps, dataset=dataset)
+    bench = evaluate_benchmarks(data, benchmarks, period, evaluator=evaluator, cost_bps=cost_bps,
+                                periods_per_year=args.periods_per_year, dataset=dataset)
     rows = pd.concat([table, bench.rename(columns={"benchmark": "strategy"})], ignore_index=True)
     print(f"{spec.describe()}\nPeriod {rows['start'].iloc[0]} -> {rows['end'].iloc[0]}\n")
     print(rows.set_index("strategy")[SHOWN_METRICS].T.to_string(float_format="{:,.4f}".format))
@@ -124,7 +129,8 @@ def _sweep(args: argparse.Namespace, spec: StrategySpec, space: dict, data: pd.D
            cost_bps: float, evaluator: CandidateEvaluator) -> int:
     candidates = generate_candidates(spec, space, args.max_candidates)
     started = time.perf_counter()
-    results = evaluator(data, candidates, cost_bps, start=args.start, end=args.end, dataset=dataset)
+    results = evaluator(data, candidates, cost_bps, args.periods_per_year, start=args.start, end=args.end,
+                        dataset=dataset)
     elapsed = time.perf_counter() - started
     out = args.out or PROJECT_ROOT / "results" / "sweeps" / f"{spec.name}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +148,7 @@ def _experiment(args: argparse.Namespace, spec: StrategySpec, space: dict, data:
         validation=Period(args.validation_start, args.validation_end),
         transaction_cost=args.transaction_cost, top_n=args.top, selection_metric=args.selection_metric,
         max_candidates=args.max_candidates, min_trades_per_year=args.min_trades_per_year,
+        periods_per_year=args.periods_per_year,
     )
     result = run_experiment(data, spec, space, settings, benchmarks, dataset, evaluator)
     record = new_record(settings, dataset=dataset, data_path=str(args.data), hypothesis=spec.description,

@@ -6,6 +6,7 @@ import copy
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from src.agents import prompts
@@ -288,17 +289,39 @@ def test_cli_runs_with_native_backend_when_built(tmp_path: Path) -> None:
     assert record.status == "completed" and record.timing["backend"] == "cpp"
 
 
-def test_returns_with_lookback_is_repaired_using_the_error_hint(settings: ExperimentSettings, tmp_path: Path) -> None:
-    bad = proposal(strategy={"name": "r", "conditions": [
+def test_returns_with_lookback_is_rewritten_as_momentum(settings: ExperimentSettings, tmp_path: Path) -> None:
+    in_condition = proposal(strategy={"name": "r", "conditions": [
         {"id": "r", "feature": "returns", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}]},
         parameter_space={"r.lookback": [12, 24]})
-    good = proposal(strategy={"name": "r", "conditions": [
-        {"id": "r", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}]},
-        parameter_space={"r.lookback": [12, 24]})
-    generator = FakeGenerator([json.dumps(bad), json.dumps(good)])
+    only_swept = proposal(strategy={"name": "r", "conditions": [  # no id, lookback only in the parameter space
+        {"feature": "returns", "field": "close", "operator": ">", "threshold": 0.0}]},
+        parameter_space={"returns.lookback": [12, 48]})
+    for reply in (in_condition, only_swept):
+        parsed = parse_proposal(json.dumps(reply), max_candidates=100)
+        (condition,) = parsed.strategy.conditions
+        assert condition.feature == "momentum" and condition.key in ("r", "returns")
+        assert parsed.notes and "rewritten as 'momentum'" in parsed.notes[0]
+
+    generator = FakeGenerator([json.dumps(in_condition)])
     (record,) = run(generator, settings, tmp_path, hypotheses=1)
-    assert record.status == "completed"
-    assert "use momentum with lookback N" in generator.calls[1][-1]["content"]  # the repair prompt carries the hint
+    assert record.status == "completed" and len(generator.calls) == 1  # no rejection, no retry
+    assert "rewritten as 'momentum'" in record.notes
+    assert "AUTOMATIC CORRECTION:" in prompts.describe_experiment(record)
+    one_bar = proposal(strategy={"name": "r", "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": ">", "threshold": 0.0}]}, parameter_space={})
+    assert parse_proposal(json.dumps(one_bar), 100).strategy.conditions[0].feature == "returns"  # untouched
+
+
+def test_prompt_is_asset_neutral_and_describes_the_data(settings: ExperimentSettings) -> None:
+    from src.agents.research import bar_label, build_system_prompt
+
+    data = make_hourly_data()
+    text = build_system_prompt(data, settings)
+    assert "1-hour OHLCV bars of SYN/USD" in text and "crypto" not in text.lower()
+    daily = data.iloc[::24].reset_index(drop=True)
+    assert bar_label(daily) == "1-day" and bar_label(data) == "1-hour"
+    assert bar_label(data.iloc[::1].assign(timestamp=pd.date_range("2020-01-01", periods=len(data), freq="15min"))) \
+        == "15-minute"
 
 
 def test_prompt_asks_for_ranges_and_shows_training_feature_ranges(settings: ExperimentSettings) -> None:

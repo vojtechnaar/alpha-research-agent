@@ -58,16 +58,20 @@ def search_guidance(max_candidates: int) -> str:
     return (f'Give each swept parameter a RANGE {{"min": a, "max": b}}: the engine fills in up to '
             f"{MAX_VALUES_PER_RANGE} values per range (lookbacks spaced geometrically, thresholds evenly) so the "
             f"grid uses the budget of {max_candidates} combinations. Choose WIDE ranges, e.g. lookbacks from a few "
-            "hours to several weeks (6 to 720) and thresholds across the feature's typical values, so the "
+            "bars to several hundred bars (6 to 720) and thresholds across the feature's typical values, so the "
             "parameter sensitivity shows where an effect lives. An explicit list [v1, v2, ...] is also allowed "
             "when only specific values make sense.")
 
 
 def system_prompt(max_candidates: int, transaction_cost: float, bar: str = "1-hour",
-                  ranges: list[dict[str, Any]] | None = None) -> str:
-    """Role, rules, primitives (with typical values on the training data, if given) and output format."""
+                  ranges: list[dict[str, Any]] | None = None, market: str = "a traded asset") -> str:
+    """Role, rules, primitives (with typical values on the training data, if given) and output format.
+
+    Asset-neutral: the market name and bar length come from the data (build_system_prompt), and the
+    typical feature values from its training period, so the same prompt works for other markets.
+    """
     typical = f"\n\n{format_ranges(ranges)}" if ranges else ""
-    return f"""You are a quantitative researcher. You test hypotheses about {bar} crypto OHLCV bars by \
+    return f"""You are a quantitative researcher. You test hypotheses about {bar} OHLCV bars of {market} by \
 proposing rule-based strategies. A numerical engine runs the parameter search and backtests; \
 you only decide WHAT to test.
 
@@ -115,6 +119,8 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
         return "\n".join(lines + [f"STATUS: {record.status} ({record.error})"])
 
     metric = record.selection_metric
+    if record.notes:
+        lines.append(f"AUTOMATIC CORRECTION: {record.notes}")
     if record.strategy_spec:
         lines.append(f"STRATEGY: {StrategySpec.from_dict(record.strategy_spec).describe()}")
     budget = f" (budget {record.max_candidates})" if record.max_candidates else ""

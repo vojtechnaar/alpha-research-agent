@@ -201,6 +201,7 @@ class ResearchProposal:
     parameter_space: dict[str, list[int | float]] = field(default_factory=dict)  # explicit values
     rationale: str = ""
     requested_space: dict[str, Any] = field(default_factory=dict)  # as written, ranges not yet expanded
+    notes: tuple[str, ...] = ()  # automatic corrections applied before validation (see agents/proposals.py)
 
     @classmethod
     def from_dict(cls, data: Any, max_candidates: int | None = None) -> ResearchProposal:

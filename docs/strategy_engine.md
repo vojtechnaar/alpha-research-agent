@@ -49,6 +49,11 @@ Examples are in `configs/strategies/` (research), `configs/benchmarks/` (benchma
 | `zscore` | (x[t] − rolling_mean) / rolling_std; NaN if std = 0 | ≥ 2 |
 | `rolling_min`, `rolling_max` | min/max of x[t-L+1..t] | ≥ 1 |
 | `volume_change` | x[t] / mean(x[t-L..t-1]) − 1 (bar t excluded from the mean) | ≥ 1 |
+| `distance_to_max` | x[t] / max(x[t-L+1..t]) − 1; ≤ 0, and 0 means a new L-bar high | ≥ 1 |
+| `distance_to_min` | x[t] / min(x[t-L+1..t]) − 1; ≥ 0, and 0 means a new L-bar low | ≥ 1 |
+| `distance_to_mean` | x[t] / mean(x[t-L+1..t]) − 1 | ≥ 1 |
+
+The `distance_to_*` features are unit-free, so the same threshold means the same thing at any price level or on any market. `rolling_mean`, `rolling_min`, `rolling_max` and `rolling_std` of a price are price *levels*, and a fixed threshold on them rarely generalises.
 
 Rules shared by every feature, which the CUDA version must match:
 - **Past data only:** each feature uses only bars ≤ t. `tests/test_features.py` checks this for every feature in the registry.

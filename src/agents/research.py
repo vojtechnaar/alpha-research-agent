@@ -35,6 +35,7 @@ import pandas as pd
 
 from src.agents.proposals import TRUNCATED_HINT, candidate_identities, parse_proposal
 from src.backends import BACKENDS, get_evaluator
+from src.backtest.metrics import HOURS_PER_YEAR
 from src.agents.prompts import feedback_message, initial_request, repair_message, system_prompt
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, load_benchmarks
 from src.research.experiment import ExperimentSettings, Period, run_experiment
@@ -186,7 +187,7 @@ def run_research(
                 settings, "completed", hypothesis=proposal.hypothesis, rationale=proposal.rationale,
                 strategy_spec=proposal.strategy.to_dict(), strategy_description=proposal.strategy.describe(),
                 parameter_space=proposal.parameter_space, requested_parameter_space=proposal.requested_space,
-                **common,
+                notes="; ".join(proposal.notes), **common,
             )
             try:
                 result = run_experiment(data, proposal.strategy, proposal.parameter_space, settings,
@@ -212,9 +213,19 @@ def run_research(
 
 
 def build_system_prompt(data: pd.DataFrame, settings: ExperimentSettings) -> str:
-    """System prompt including the typical feature values on the TRAIN period only."""
-    return system_prompt(settings.max_candidates, settings.transaction_cost,
-                         ranges=feature_ranges(data, settings.train))
+    """System prompt for this dataset: market name, bar length and typical feature values (TRAIN only)."""
+    market = str(data["symbol"].iloc[0]) if "symbol" in data and len(data) else "a traded asset"
+    return system_prompt(settings.max_candidates, settings.transaction_cost, bar=bar_label(data),
+                         ranges=feature_ranges(data, settings.train), market=market)
+
+
+def bar_label(data: pd.DataFrame) -> str:
+    """'1-hour', '1-day', '15-minute', ... from the typical spacing of the timestamps."""
+    seconds = int(data["timestamp"].diff().median().total_seconds()) if len(data) > 1 else 0
+    for unit, size in (("day", 86_400), ("hour", 3_600), ("minute", 60)):
+        if seconds >= size and seconds % size == 0:
+            return f"{seconds // size}-{unit}"
+    return f"{seconds}-second"
 
 
 class ReplayGenerator:
@@ -254,6 +265,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="candidates trading less often are not selected; fewer validation trades are flagged")
     p.add_argument("--max-candidates", type=int, default=1000, help="max parameter combinations per hypothesis")
     p.add_argument("--transaction-cost", type=float, default=0.001, help="fraction per unit turnover (0.001 = 10 bps)")
+    p.add_argument("--periods-per-year", type=float, default=HOURS_PER_YEAR,
+                   help="bars per year for annualising (8760 = hourly 24/7; e.g. 252 for daily stock bars)")
     p.add_argument("--benchmarks-dir", type=Path, default=DEFAULT_BENCHMARKS_DIR)
     p.add_argument("--backend", choices=BACKENDS, default="python", help="backtest engine (cpp/cuda need make -C cuda)")
     p.add_argument("--backtest-device", type=int, help="GPU index for --backend cuda (default: $BACKTEST_DEVICE or 0)")
@@ -285,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             validation=Period(args.validation_start, args.validation_end),
             transaction_cost=args.transaction_cost, top_n=args.top, selection_metric=args.selection_metric,
             max_candidates=args.max_candidates, min_trades_per_year=args.min_trades_per_year,
+            periods_per_year=args.periods_per_year,
         )
         loop = LoopSettings(args.hypotheses, args.max_proposal_retries, args.max_consecutive_rejections,
                             args.recent, not args.no_validation_feedback, args.seed, args.max_per_family)

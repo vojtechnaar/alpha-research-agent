@@ -32,7 +32,8 @@ LIBRARIES = {"cpp": "libbacktest_cpu.so", "cuda": "libbacktest_cuda.so"}
 
 # Must match the enums in cuda/backtest.cu (checked by tests/test_native_backend.py).
 FEATURE_CODES = {"returns": 1, "momentum": 2, "rolling_mean": 3, "rolling_std": 4, "volatility": 5,
-                 "zscore": 6, "rolling_min": 7, "rolling_max": 8, "volume_change": 9}
+                 "zscore": 6, "rolling_min": 7, "rolling_max": 8, "volume_change": 9,
+                 "distance_to_max": 10, "distance_to_min": 11, "distance_to_mean": 12}
 OPERATOR_CODES = {">": 1, ">=": 2, "<": 3, "<=": 4}
 LOGIC_CODES = {"AND": 1, "OR": 2}
 

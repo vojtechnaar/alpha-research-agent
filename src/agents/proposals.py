@@ -5,9 +5,12 @@ Nothing in the reply is executed: it is parsed as JSON and validated against the
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Mapping, Set
+from dataclasses import replace
+from typing import Any
 
 from src.strategies.features import FEATURE_REGISTRY
 from src.strategies.schema import DUPLICATE_PROPOSAL, FAMILY_EXHAUSTED, MALFORMED_JSON, ResearchProposal, SpecError
@@ -42,6 +45,32 @@ def extract_json(text: str) -> dict:
     return data
 
 
+def normalize(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Fix known, unambiguous LLM mistakes before validation; returns (data, notes).
+
+    Only exact equivalences are rewritten, and every rewrite is recorded:
+      returns with a lookback N  ->  momentum with lookback N
+    (returns is always the one-bar return; the return over N bars is exactly momentum(N)). The
+    condition id is kept, so '<id>.lookback' parameter names stay valid.
+    """
+    data = copy.deepcopy(data)
+    notes: list[str] = []
+    strategy = data.get("strategy")
+    space = data.get("parameter_space") if isinstance(data.get("parameter_space"), dict) else {}
+    conditions = strategy.get("conditions") if isinstance(strategy, dict) else None
+    for condition in conditions if isinstance(conditions, list) else []:
+        if not isinstance(condition, dict) or condition.get("feature") != "returns":
+            continue
+        key = condition.get("id") or "returns"
+        if "lookback" not in condition and f"{key}.lookback" not in space:
+            continue
+        condition.update(feature="momentum", id=key)
+        condition.setdefault("lookback", 1)  # base value; a swept lookback overrides it
+        notes.append(f"'returns' with a lookback was rewritten as 'momentum' (condition '{key}'): "
+                     "returns is always the one-bar return; the return over N bars is momentum with lookback N")
+    return data, notes
+
+
 def candidate_identities(proposal: ResearchProposal) -> list[str]:
     """StrategySpec.identity() of every combination the proposal would test."""
     return [proposal.strategy.with_parameters(params).identity() for params in parameter_grid(proposal.parameter_space)]
@@ -64,7 +93,9 @@ def parse_proposal(
     `families` maps StrategySpec.family() to the experiments that tested it: once a family has
     `max_per_family` experiments, further proposals of it are rejected (FAMILY_EXHAUSTED).
     """
-    proposal = ResearchProposal.from_dict(extract_json(text), max_candidates=max_candidates)
+    data, notes = normalize(extract_json(text))
+    proposal = ResearchProposal.from_dict(data, max_candidates=max_candidates)
+    proposal = replace(proposal, notes=tuple(notes))
     if seen is not None and proposal.key() in seen:
         earlier = seen[proposal.key()] if isinstance(seen, Mapping) else "an earlier experiment"
         raise SpecError(DUPLICATE_PROPOSAL, f"this exact strategy and parameter space repeats {earlier}. Do not "
