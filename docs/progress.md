@@ -6,7 +6,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
 - **The full loop runs on DeepDish:** Qwen3-8B proposes a hypothesis → it's validated → CUDA backtests up to 20,000 parameter combinations → the top 10 are retested on unseen data → compared with benchmarks → a compact summary goes back to Qwen.
 - **Speed:** Python 28.5 ms per backtest, C++ 0.175 ms, **CUDA 0.045 ms (635× faster)**, with identical results. A hypothesis is now tested in about 1 s, while Qwen needs 20–30 s to write one. **The LLM is the bottleneck, not the backtests.**
-- **Best result so far:** "long when multi-day momentum is positive in calm markets" was positive on training and validation three separate times. It's robust across parameters, but it hasn't beaten buy-and-hold.
+- **Best result so far:** "long when the price is above its weekly average and volatility is low" (`distance_to_mean` + `volatility`). About 80–88% of 14,641 variants were profitable on train. The frozen top 10 scored a validation Sharpe of about 1.5–2.0 with almost no degradation, and roughly half buy-and-hold's drawdown on train (-33% vs -84%). It still doesn't beat buy-and-hold's validation Sharpe (2.00 vs 2.04). It's the same family as the earlier "momentum in calm markets" result, expressed better.
 
 ## Problems and fixes
 
@@ -63,12 +63,14 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 24. **Qwen kept giving `returns` a lookback,** even with the error explaining the fix. Two hypotheses were lost after 3 attempts each.
     → The mistake is unambiguous (the return over N bars *is* `momentum` with lookback N), so it's now rewritten automatically before validation. The correction is recorded and shown to Qwen.
 25. **Qwen couldn't express "price near its recent high, low or average".** It tried fixed thresholds on price levels, e.g. `rolling_min(close) >= 0.95` (always true) and `rolling_max(close) > 9800` (meaningless when the price went from $1,000 to $90,000).
-    → Added three unit-free features, `distance_to_max`, `distance_to_min` and `distance_to_mean`, in Python and CUDA, parity-tested.
+    → Added three unit-free features, `distance_to_max`, `distance_to_min` and `distance_to_mean`, in Python and CUDA, parity-tested. Qwen used them in 7 of 9 hypotheses in the next run, and they produced the best results so far. The `returns` rewrite (24) also removed all rejections of that kind.
 26. **The prompt and hints were crypto-specific.**
     → The wording is now asset-neutral. The market and bar length come from the data, typical values from the training period, and `--periods-per-year` sets the annualisation for other markets.
 
 ## Still open
 
-- **Qwen's research judgement:** a short bias in a bull market, and only a few idea families. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.
+- **The hypothesis text often contradicts the rule,** e.g. "may reverse upward" with a *short* rule, or "near recent lows" with "5% above the average". The engine tests the rule correctly, but these records would teach LoRA sloppy reasoning. Possible fix: have Qwen state the direction explicitly and check it against `true_position`, or filter such records out of the LoRA data.
+- **Validation isn't blind any more.** Qwen has seen 2023–24 results across many runs, so the best family is partly fitted to that period. Next: confirm it on ETH (discover on BTC, confirm on ETH), then evaluate once on the untouched 2025+ test.
+- **Qwen's research judgement:** short ideas keep failing in this mostly bull-market sample, but Qwen keeps proposing them. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.
 - **Formal statistics:** Probabilistic/Deflated Sharpe, block bootstrap, multiple-testing corrections.
 - **Cross-asset and walk-forward validation** (discover on BTC, confirm on ETH), and an exposure-matched benchmark.
