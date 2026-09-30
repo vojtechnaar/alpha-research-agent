@@ -8,6 +8,13 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 - **Speed:** Python 28.5 ms per backtest, C++ 0.175 ms, **CUDA 0.045 ms (635× faster)**, with identical results. A hypothesis is now tested in about 1 s, while Qwen needs 20–30 s to write one. **The LLM is the bottleneck, not the backtests.**
 - **Best result so far:** "long when the price is above its weekly average and volatility is low" (`distance_to_mean` + `volatility`). About 80–88% of 14,641 variants were profitable on train. The frozen top 10 scored a validation Sharpe of about 1.5–2.0 with almost no degradation, and roughly half buy-and-hold's drawdown on train (-33% vs -84%). It still doesn't beat buy-and-hold's validation Sharpe (2.00 vs 2.04). It's the same family as the earlier "momentum in calm markets" result, expressed better.
 
+- **The fixes measurably improved the researcher** (`python -m src.research.runs` over the first 11 Qwen runs on BTC):
+  - first-try valid replies: 0% → 60%
+  - useful experiments per 10 LLM calls: 0 → about 2.9
+  - idea families per run: 1–3 → 7–8
+
+  About 2.9 useful experiments per 10 calls is the base-model baseline a LoRA has to beat.
+
 ## Problems and fixes
 
 **Engine and research design**
@@ -69,7 +76,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 27. **Validation stopped being blind.** Qwen had seen 2023–24 results across many runs, so the best ideas were partly fitted to that period.
     → `python -m src.research.confirm` re-tests chosen experiments without the LLM: *replicate* (the same idea re-selected on another asset), *transfer* (the frozen parameters applied unchanged to another asset), and a one-time *final test* on the untouched 2025+ period. Every final-test use is logged and repeat use triggers a warning.
 28. **Runs repeated each other.** A fixed default seed (42) made every run start with the same proposals, so a new run re-tested yesterday's ideas.
-    → Each run gets a fresh random seed, printed and saved in `run.json`. `--seed N` reproduces a run.
+    → Each run gets a fresh random seed, printed and saved in `run.json`. `--seed N` reproduces a run. (Two saved runs with seed 42 had identical metrics, confirming the problem.)
 29. **Buy-and-hold in disguise looked like the best result.** One candidate was long 99.8% of the validation period, so its Sharpe simply equalled buy-and-hold's.
     → A warning fires when a long-only strategy is in the market at least 90% of the validation period, and the run metrics don't count it as useful.
 30. **Only one market (BTC, hourly).** Ideas tuned on one asset may be luck.
