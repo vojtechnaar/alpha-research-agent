@@ -301,6 +301,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)  # progress shows up live even when redirected to a log file
     # A fixed default seed made every run start with the same proposals; a fresh one per run explores more.
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1, 1_000_000)
     try:

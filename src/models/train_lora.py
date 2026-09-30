@@ -17,6 +17,7 @@ import json
 import math
 import random
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-length", type=int, default=8192, help="longer examples are skipped (prompts are ~3-6k tokens)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)  # progress shows up live even when redirected to a log file
 
     import torch
     from peft import LoraConfig, get_peft_model
@@ -133,9 +135,13 @@ def main(argv: list[str] | None = None) -> int:
                 scheduler.step()
                 optimizer.zero_grad()
                 step += 1
+                elapsed = time.perf_counter() - started
+                print(f"  epoch {epoch}/{args.epochs}, step {step}/{total_steps}: {i}/{len(order)} examples, "
+                      f"train loss {statistics.mean(running):.4f}, {elapsed / 60:.1f} min, "
+                      f"~{elapsed / step * (total_steps - step) / 60:.0f} min left")
         val = validation_loss()
         history.append({"epoch": epoch, "train_loss": sum(running) / len(running), "val_loss": val})
-        print(f"epoch {epoch}: train loss {history[-1]['train_loss']:.4f}, validation loss {val:.4f} "
+        print(f"epoch {epoch}/{args.epochs}: train loss {history[-1]['train_loss']:.4f}, validation loss {val:.4f} "
               f"({time.perf_counter() - started:.0f}s, {gpu_memory()})")
         if not splits["val"] or val < best:  # keep the adapter that generalises best
             best = val
