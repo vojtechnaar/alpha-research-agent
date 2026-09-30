@@ -205,6 +205,8 @@ def test_duplicate_proposal_triggers_a_repair(settings: ExperimentSettings, tmp_
     records = run(generator, settings, tmp_path, hypotheses=2)
     assert [r.status for r in records] == ["completed", "completed"]
     assert records[1].llm["attempts"][0]["code"] == DUPLICATE_PROPOSAL
+    repair = generator.calls[2][-1]["content"]  # the message after the duplicate names what it repeated
+    assert "repeats experiment 1 ('Momentum over [6, 24].')" in repair and "different features" in repair
 
 
 def test_evaluation_errors_are_recorded_not_fatal(settings: ExperimentSettings, tmp_path: Path) -> None:
@@ -279,3 +281,24 @@ def test_returns_with_lookback_is_repaired_using_the_error_hint(settings: Experi
     (record,) = run(generator, settings, tmp_path, hypotheses=1)
     assert record.status == "completed"
     assert "use momentum with lookback N" in generator.calls[1][-1]["content"]  # the repair prompt carries the hint
+
+
+@pytest.mark.parametrize("budget, values", [(20000, "5-10 values"), (1000, "4-8 values"), (100, "3-5 values")])
+def test_search_guidance_scales_with_the_candidate_budget(budget: int, values: str) -> None:
+    text = prompts.system_prompt(max_candidates=budget, transaction_cost=0.001)
+    assert values in text and f"up to {budget} per hypothesis" in text and "WIDE range" in text
+
+
+def test_feedback_shows_exploration_coverage(settings: ExperimentSettings, tmp_path: Path) -> None:
+    short = proposal(hypothesis="Short sharp drops.", strategy={"name": "s", "true_position": -1, "conditions": [
+        {"id": "r", "feature": "returns", "field": "close", "operator": "<", "threshold": -0.01}]},
+        parameter_space={"r.threshold": [-0.02, -0.01]})
+    records = run(FakeGenerator([json.dumps(PROPOSAL), json.dumps(short), "not json"]), settings, tmp_path,
+                  hypotheses=3, max_proposal_retries=0)
+    text = prompts.exploration_summary(records)
+    assert "features used: " in text and "momentum x1" in text and "returns x1" in text
+    untried = text.split("features not yet tried: ")[1].splitlines()[0]
+    assert "zscore" in untried and "momentum" not in untried and "returns" not in untried
+    assert "long/flat x1" in text and "short/flat x1" in text  # the rejected 3rd proposal is not counted
+    assert "EXPLORATION" in prompts.feedback_message(records)
+    assert "(budget 1000)" in prompts.describe_experiment(records[0])

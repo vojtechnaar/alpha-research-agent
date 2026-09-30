@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Set
 
 from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError
 
@@ -28,10 +29,18 @@ def extract_json(text: str) -> dict:
     return data
 
 
-def parse_proposal(text: str, max_candidates: int, seen: set[str] | None = None) -> ResearchProposal:
-    """Parse and fully validate a reply; reject repeats of already-run experiments."""
+def parse_proposal(
+    text: str, max_candidates: int, seen: Mapping[str, str] | Set[str] | None = None
+) -> ResearchProposal:
+    """Parse and fully validate a reply; reject repeats of already-run experiments.
+
+    `seen` maps ResearchProposal.key() to a label of the earlier experiment (e.g. "experiment 1
+    ('...')"), so the rejection tells the model exactly which experiment it repeated.
+    """
     proposal = ResearchProposal.from_dict(extract_json(text), max_candidates=max_candidates)
     if seen is not None and proposal.key() in seen:
-        raise SpecError(DUPLICATE_PROPOSAL, "this exact strategy and parameter space was already tested; "
-                                            "propose something different")
+        earlier = seen[proposal.key()] if isinstance(seen, Mapping) else "an earlier experiment"
+        raise SpecError(DUPLICATE_PROPOSAL, f"this exact strategy and parameter space repeats {earlier}. Do not "
+                                            "resubmit it: use different features or conditions, or clearly "
+                                            "different parameter ranges.")
     return proposal

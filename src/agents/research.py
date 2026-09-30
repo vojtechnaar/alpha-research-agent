@@ -25,7 +25,8 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol
 
 import pandas as pd
 
@@ -71,7 +72,7 @@ def request_proposal(
     generator: Generator,
     messages: list[dict[str, str]],
     max_candidates: int,
-    seen: set[str],
+    seen: Mapping[str, str],
     max_retries: int,
     seed: int | None,
 ) -> tuple[ResearchProposal | None, list[dict[str, Any]], SpecError | None]:
@@ -115,7 +116,7 @@ def run_research(
     """Run at most `loop.hypotheses` research iterations; returns their records (also saved as JSONL)."""
     system = system_prompt(settings.max_candidates, settings.transaction_cost)
     records: list[ExperimentRecord] = []
-    seen: set[str] = set()
+    seen: dict[str, str] = {}  # proposal key -> label of the experiment that ran it
     consecutive_rejections = 0
 
     for iteration in range(loop.hypotheses):
@@ -134,7 +135,7 @@ def run_research(
             record = new_record(settings, "rejected", error=str(error), **common)
         else:
             consecutive_rejections = 0
-            seen.add(proposal.key())
+            seen[proposal.key()] = f"experiment {iteration + 1} ('{proposal.hypothesis}')"
             record = new_record(
                 settings, "completed", hypothesis=proposal.hypothesis, rationale=proposal.rationale,
                 strategy_spec=proposal.strategy.to_dict(), strategy_description=proposal.strategy.describe(),

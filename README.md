@@ -7,6 +7,7 @@ An automated quantitative crypto research system:
 
 - [docs/architecture.md](docs/architecture.md): the pipeline, the research loop, the splits, records and design decisions.
 - [docs/strategy_engine.md](docs/strategy_engine.md): the spec format, features, operators, experiments, the backend interface and the CUDA mapping.
+- [docs/progress.md](docs/progress.md): a dated development log of what was built, what the experiments showed, known issues and next steps.
 
 **Current milestone:** the research loop runs on the native C++/CUDA backtest engine, which is parity-tested against Python. LoRA training comes next.
 

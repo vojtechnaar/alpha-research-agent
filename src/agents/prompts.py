@@ -8,11 +8,12 @@ Feedback is a compact text summary of recent experiments (no CSVs, no price hist
 from __future__ import annotations
 
 import json
+from collections import Counter
 
 from src.research.records import ExperimentRecord
 from src.strategies.features import FEATURE_REGISTRY
 from src.strategies.operators import LOGIC_REGISTRY, OPERATOR_REGISTRY
-from src.strategies.schema import FIELDS, POSITIONS, SpecError, StrategySpec
+from src.strategies.schema import FIELDS, POSITION_NAMES, POSITIONS, SpecError, StrategySpec
 
 # Shows the JSON structure only. Kept deliberately plain (one condition): a small model tends to
 # copy whatever strategy the example contains, so the example must not be a promising idea.
@@ -46,6 +47,20 @@ def available_primitives() -> str:
     )
 
 
+def search_guidance(max_candidates: int) -> str:
+    """How large and how wide a parameter search should be, scaled to the candidate budget.
+
+    With a fast backend (large budget) a wide grid costs almost nothing and makes the parameter
+    sensitivity informative; the multiple-testing warning and validation retest guard against luck.
+    """
+    values = "5-10" if max_candidates >= 5000 else "4-8" if max_candidates >= 500 else "3-5"
+    return (f"The engine tests every combination, up to {max_candidates} per hypothesis (the product of the "
+            f"list lengths must not exceed it). Use {values} values per swept parameter spanning a WIDE range: "
+            "lookbacks from a few hours to several weeks (e.g. 6 to 720) and thresholds across the feature's "
+            "typical range, so the parameter sensitivity shows where an effect lives. Narrow ranges put the best "
+            "value at the edge of the grid.")
+
+
 def system_prompt(max_candidates: int, transaction_cost: float, bar: str = "1-hour") -> str:
     """Role, rules, primitives and output format."""
     return f"""You are a quantitative researcher. You test hypotheses about {bar} crypto OHLCV bars by \
@@ -73,8 +88,9 @@ Rules:
 - Costs matter: every position change pays the cost, so a rule that flips every few bars pays it \
 thousands of times. Use the COSTS line of the feedback to see how often strategies traded.
 - You may refine an earlier idea with different parameter ranges, but never resubmit an identical experiment.
-- Parameter ranges must be sensible for each feature's threshold units, and the product of \
-the list lengths must be at most {max_candidates}. 3-6 values per parameter is usually enough."""
+- Parameter ranges must be sensible for each feature's threshold units. {search_guidance(max_candidates)}
+- Explore: both long and short rules are allowed; use the EXPLORATION line of the feedback to try \
+features and position rules that have not been tested yet."""
 
 
 def initial_request() -> str:
@@ -96,7 +112,8 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
     metric = record.selection_metric
     if record.strategy_spec:
         lines.append(f"STRATEGY: {StrategySpec.from_dict(record.strategy_spec).describe()}")
-    lines.append(f"SEARCH: {record.n_candidates} candidates, "
+    budget = f" (budget {record.max_candidates})" if record.max_candidates else ""
+    lines.append(f"SEARCH: {record.n_candidates} candidates{budget}, "
                  + "; ".join(f"{k} {v}" for k, v in (record.parameter_space or {}).items()))
     d, tp = record.train_summary.get("distribution", {}), record.train_period
     lines.append(f"TRAIN ({tp['start']} to {tp['end']}): {metric} median {_f(d.get('median'))}, "
@@ -131,15 +148,35 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
     return "\n".join(lines)
 
 
+def exploration_summary(records: list[ExperimentRecord]) -> str:
+    """Which features and position rules completed experiments have used, and which are untried."""
+    features: Counter[str] = Counter()
+    positions: Counter[str] = Counter()
+    for r in records:
+        if r.status != "completed" or not r.strategy_spec:
+            continue
+        features.update({c["feature"] for c in r.strategy_spec["conditions"]})  # once per experiment
+        spec = r.strategy_spec
+        positions[f"{POSITION_NAMES[spec['true_position']]}/{POSITION_NAMES[spec['false_position']]}"] += 1
+    untried = [name for name in FEATURE_REGISTRY if name not in features]
+    counts = ", ".join(f"{name} x{n}" for name, n in features.most_common()) or "none"
+    rules = ", ".join(f"{rule} x{n}" for rule, n in positions.most_common()) or "none"
+    return (f"EXPLORATION (completed experiments):\n  features used: {counts}\n"
+            f"  features not yet tried: {', '.join(untried) or 'none'}\n"
+            f"  position rules used (if true / otherwise): {rules}")
+
+
 def feedback_message(records: list[ExperimentRecord], recent: int = 2, include_validation: bool = True) -> str:
-    """Next user message: one line per earlier hypothesis, details for the most recent ones."""
+    """Next user message: earlier hypotheses, exploration coverage, details for the most recent ones."""
     history = "\n".join(
         f"{i}. [{r.status}] {r.hypothesis or '(invalid proposal)'}" for i, r in enumerate(records, 1)
     )
     details = "\n\n".join(describe_experiment(r, include_validation) for r in records[-recent:])
-    return (f"PREVIOUS HYPOTHESES (do not repeat):\n{history}\n\nMOST RECENT RESULTS:\n{details}\n\n"
-            "Propose ONE next research proposal as JSON: refine what the evidence supports or test a "
-            "different idea. Do not simply chase the highest train result.")
+    return (f"PREVIOUS HYPOTHESES (do not repeat):\n{history}\n\n{exploration_summary(records)}\n\n"
+            f"MOST RECENT RESULTS:\n{details}\n\n"
+            "Propose ONE next research proposal as JSON: refine what the evidence clearly supports, or test a "
+            "different idea (preferably with an untried feature or position rule). Do not simply chase the highest "
+            "train result.")
 
 
 def _f(value: float | None, spec: str = ".2f") -> str:
