@@ -35,6 +35,9 @@ checkpoints/
 # OS
 .DS_Store
 
+# Run logs (keep them in results/logs/)
+*.log
+
 # Generated results: sweep CSVs, experiment records, run logs (keep the folder)
 /results/*
 !/results/.gitkeep

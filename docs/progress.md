@@ -66,11 +66,13 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → Added three unit-free features, `distance_to_max`, `distance_to_min` and `distance_to_mean`, in Python and CUDA, parity-tested. Qwen used them in 7 of 9 hypotheses in the next run, and they produced the best results so far. The `returns` rewrite (24) also removed all rejections of that kind.
 26. **The prompt and hints were crypto-specific.**
     → The wording is now asset-neutral. The market and bar length come from the data, typical values from the training period, and `--periods-per-year` sets the annualisation for other markets.
+27. **Validation stopped being blind.** Qwen had seen 2023–24 results across many runs, so the best ideas were partly fitted to that period.
+    → `python -m src.research.confirm` re-tests chosen experiments without the LLM: *replicate* (the same idea re-selected on another asset), *transfer* (the frozen parameters applied unchanged to another asset), and a one-time *final test* on the untouched 2025+ period. Every final-test use is logged and repeat use triggers a warning.
 
 ## Still open
 
 - **The hypothesis text often contradicts the rule,** e.g. "may reverse upward" with a *short* rule, or "near recent lows" with "5% above the average". The engine tests the rule correctly, but these records would teach LoRA sloppy reasoning. Possible fix: have Qwen state the direction explicitly and check it against `true_position`, or filter such records out of the LoRA data.
-- **Validation isn't blind any more.** Qwen has seen 2023–24 results across many runs, so the best family is partly fitted to that period. Next: confirm it on ETH (discover on BTC, confirm on ETH), then evaluate once on the untouched 2025+ test.
+- **Confirm the best idea:** run `src.research.confirm` for the best experiments on ETH, then once on the 2025+ final test, and report the result honestly, whatever it is.
 - **Qwen's research judgement:** short ideas keep failing in this mostly bull-market sample, but Qwen keeps proposing them. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.
 - **Formal statistics:** Probabilistic/Deflated Sharpe, block bootstrap, multiple-testing corrections.
 - **Cross-asset and walk-forward validation** (discover on BTC, confirm on ETH), and an exposure-matched benchmark.

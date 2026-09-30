@@ -51,6 +51,11 @@ python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypo
     --replay configs/proposals/example_momentum_low_volatility.json
 
 python -m src.research.report results/experiments/<run_id>/experiments.jsonl   # review a run
+
+# Confirm chosen experiments without the LLM: on another asset, then ONCE on the final test (2025+)
+python -m src.research.confirm results/experiments/<run_id>/experiments.jsonl --experiments 3 6 \
+    --data data/raw/bitstamp_ETH-USD_1h.parquet --backend cuda
+python -m src.research.confirm results/experiments/<run_id>/experiments.jsonl --experiments 3 6 --final-test --backend cuda
 ```
 
 Data after `--validation-end` (default 2025-01-01) is never loaded by experiments. It's reserved as the final test.

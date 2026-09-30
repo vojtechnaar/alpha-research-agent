@@ -93,7 +93,8 @@ So the worst-case LLM cost of a run is `hypotheses × (1 + max_proposal_retries)
 **Important: validation doesn't stay out-of-sample forever.** Within one experiment, validation is unseen. The parameters are frozen before it's evaluated. But the loop shows validation results to Qwen, and Qwen's next hypothesis is shaped by them. Over many iterations the *choice of ideas* adapts to the validation period, so validation gradually becomes training information, just as it would for a human researcher who keeps checking the same holdout. The mitigations:
 
 - **Blind validation:** `--no-validation-feedback` shows Qwen train results only. Validation is still computed and recorded, but it no longer guides the search.
-- **An untouched final test period:** used only once the research is finished. Treat it as spent after you look at it.
+- **An untouched final test period:** used only once the research is finished. Treat it as spent after you look at it. `python -m src.research.confirm ... --final-test` evaluates the frozen top N of chosen experiments on it. Every use is logged in `results/final_test_log.jsonl`, and the command warns when the test has been used before.
+- **Cross-asset confirmation:** `python -m src.research.confirm ... --data <other asset>`, with no LLM involved, runs two checks. *Replicate*: the same idea and ranges, re-selected on the other asset's training period. *Transfer*: the exact frozen parameters, applied unchanged.
 - **Future options:** walk-forward evaluation (rolling train/validation windows), cross-asset validation (discover on BTC, confirm on ETH), and a fresh final-test period when new data arrives.
 
 ## Benchmarks
