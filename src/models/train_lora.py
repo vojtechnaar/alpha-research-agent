@@ -16,8 +16,10 @@ import argparse
 import json
 import math
 import random
+import statistics
 import time
 from pathlib import Path
+from typing import Any
 
 from src.models.lora_data import DEFAULT_OUT_DIR, tokenize_example
 
@@ -27,6 +29,24 @@ TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj"
 
 def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def reply_loss(model: Any, input_ids: list[int], labels: list[int]) -> Any:
+    """Cross-entropy on the assistant reply only, computing logits ONLY for the reply.
+
+    The prompt (rules + feedback) is thousands of tokens but carries no loss; asking the model for
+    logits at just the last `reply + 1` positions (`logits_to_keep`) avoids a [tokens x 152k-vocab]
+    logits tensor for the whole sequence, which is most of the activation memory. Equal to the
+    standard shifted causal-LM loss with the prompt masked out.
+    """
+    import torch
+
+    n_prompt = next(i for i, label in enumerate(labels) if label != -100)
+    keep = len(input_ids) - n_prompt + 1  # from the last prompt token: it predicts the first reply token
+    ids = torch.tensor([input_ids], device=model.device)
+    logits = model(input_ids=ids, logits_to_keep=keep).logits  # [1, keep, vocab]
+    targets = torch.tensor([labels[n_prompt:]], device=model.device)
+    return torch.nn.functional.cross_entropy(logits[0, :-1].float(), targets[0], ignore_index=-100)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--alpha", type=int, default=32)
     p.add_argument("--dropout", type=float, default=0.05)
     p.add_argument("--grad-accum", type=int, default=8, help="examples per optimizer step")
-    p.add_argument("--max-length", type=int, default=4096)
+    p.add_argument("--max-length", type=int, default=8192, help="longer examples are skipped (prompts are ~3-6k tokens)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
 
@@ -62,7 +82,9 @@ def main(argv: list[str] | None = None) -> int:
         rows = load_jsonl(args.data_dir / f"{split}.jsonl")
         tokenized = [tokenize_example(tokenizer, row["messages"], args.max_length) for row in rows]
         splits[split] = [t for t in tokenized if t is not None]
-        print(f"{split}: {len(splits[split])} examples ({len(rows) - len(splits[split])} dropped: too long)")
+        lengths = [len(t["input_ids"]) for t in splits[split]] or [0]
+        print(f"{split}: {len(splits[split])} examples ({len(rows) - len(splits[split])} dropped: longer than "
+              f"{args.max_length} tokens); tokens per example median {statistics.median(lengths):.0f}, max {max(lengths)}")
     if not splits["train"]:
         raise SystemExit("No training examples; run python -m src.models.lora_data first.")
 
@@ -82,9 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         optimizer, lambda s: min(1.0, (s + 1) / warmup) * max(0.0, 1 - s / total_steps))
 
     def loss_of(example: dict) -> torch.Tensor:
-        ids = torch.tensor([example["input_ids"]], device=model.device)
-        labels = torch.tensor([example["labels"]], device=model.device)
-        return model(input_ids=ids, labels=labels).loss
+        return reply_loss(model, example["input_ids"], example["labels"])
 
     def validation_loss() -> float:
         if not splits["val"]:

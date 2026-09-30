@@ -88,6 +88,8 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → Beating buy-and-hold only counts when buy-and-hold itself was profitable.
 33. **The LoRA must not learn from bad examples.** The records also contain failed ideas, unit mistakes and hypotheses that contradict their rules.
     → `python -m src.models.lora_data` keeps only good research steps: useful, no unit problems, text consistent with the long/short rule, no repeats. ETH and GLD are always held out. The target is the validated proposal as compact JSON. `python -m src.models.train_lora` trains a LoRA adapter (frozen bf16 base, loss on the proposal only, best validation loss kept), and `--adapter` runs the research loop with it.
+34. **LoRA training dropped over half the examples and nearly ran out of GPU memory.** Prompts (rules, typical values, feedback) are 3–6k tokens: 57% were over the 4,096-token limit. The model's output over the whole sequence (tokens × 152k vocabulary, about 2.4 GB) was allocated just to compute a loss on the ~300-token proposal.
+    → The loss is computed from outputs for the proposal tokens only (`logits_to_keep`). A test checks it equals the standard loss exactly, and that only the LoRA weights get gradients. The limit is raised to 8,192 tokens, so all examples fit, and the log prints token lengths.
 
 ## Still open
 
