@@ -177,3 +177,33 @@ def test_cost_summary_and_warning_for_a_churning_strategy(data: pd.DataFrame, se
     assert costs["median_annual_cost"] > 1.0  # more than 100% of capital per year in fees
     assert any(w.startswith("Trading costs") and "costs exceed the net return" in w
                for w in robustness_warnings(result, {"r.threshold": [0.0, 0.001]}))
+
+
+def test_unit_mistakes_are_flagged(data: pd.DataFrame, settings: ExperimentSettings) -> None:
+    never = StrategySpec.from_dict({"name": "never", "conditions": [
+        {"id": "m", "feature": "rolling_mean", "field": "close", "lookback": 72, "operator": "<", "threshold": 0}]})
+    result = run_experiment(data, never, {"m.lookback": [24, 72]}, settings)
+    warnings = robustness_warnings(result, {"m.lookback": [24, 72]})
+    assert result.condition_activity == {"scope": "base strategy", "shares": {"m": 0.0}}
+    assert any("2 of 2 combinations never traded" in w for w in warnings)
+    assert any("Condition 'm' is true on only 0.0%" in w for w in warnings)
+
+    always = StrategySpec.from_dict({"name": "always", "conditions": [
+        {"id": "s", "feature": "rolling_std", "field": "close", "lookback": 48, "operator": ">", "threshold": 0.012},
+        {"id": "m", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}]})
+    result = run_experiment(data, always, {"m.lookback": [24, 48]}, settings)
+    assert result.condition_activity["shares"]["s"] == 1.0
+    assert any("Condition 's' is true on 100%" in w for w in robustness_warnings(result, {"m.lookback": [24, 48]}))
+
+
+def test_feature_ranges_use_only_the_training_period(data: pd.DataFrame, settings: ExperimentSettings) -> None:
+    from src.research.feature_ranges import feature_ranges
+    from src.strategies.features import FEATURE_REGISTRY
+
+    ranges = {r["feature"]: r for r in feature_ranges(data, settings.train)}
+    assert set(ranges) == set(FEATURE_REGISTRY)
+    assert abs(ranges["momentum"]["median"]) < 0.02 and ranges["rolling_mean"]["p5"] > 50  # returns vs price level
+    assert ranges["volume_change"]["field"] == "volume"
+    later = data.copy()
+    later.loc[later.timestamp >= "2020-03-15", "close"] *= 10  # validation/test data must not matter
+    assert feature_ranges(later, settings.train) == feature_ranges(data, settings.train)

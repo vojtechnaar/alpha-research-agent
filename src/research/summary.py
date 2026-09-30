@@ -38,12 +38,12 @@ def summarize_validation(result: ExperimentResult) -> dict[str, Any]:
     return {
         "n_retested": int(len(table)),
         "metric": metric,
-        "median": _num(validation.median()),
+        "median": _median(validation),
         "best": _num(validation.max()),
         "worst": _num(validation.min()),
         "share_positive": _num((validation > 0).mean()),
-        "train_median_of_selected": _num(train.median()),
-        "median_change": _num((validation - train).median()),
+        "train_median_of_selected": _median(train),
+        "median_change": _median(validation - train),
         "train_best_candidate": {  # what naive "pick the in-sample winner" would have produced
             **{p: first[p] for p in params},
             f"train_{metric}": _num(first[f"train_{metric}"]),
@@ -69,11 +69,11 @@ def summarize_costs(result: ExperimentResult) -> dict[str, Any]:
     return {
         "scope": f"top {len(ids)} by train {s.selection_metric}" if result.selected else "all candidates",
         "transaction_cost": s.transaction_cost,
-        "median_trades_per_year": _num((trades / years).median()),
-        "median_bars_between_trades": _num((table["n_bars"] / trades.where(trades > 0)).median()),
-        "median_exposure": _num(table["exposure"].median()),
-        "median_annual_cost": _num((table["annual_turnover"] * s.transaction_cost).median()),
-        "median_annualized_return": _num(table["annualized_return"].median()),
+        "median_trades_per_year": _median(trades / years),
+        "median_bars_between_trades": _median(table["n_bars"] / trades.where(trades > 0)),
+        "median_exposure": _median(table["exposure"]),
+        "median_annual_cost": _median(table["annual_turnover"] * s.transaction_cost),
+        "median_annualized_return": _median(table["annualized_return"]),
     }
 
 
@@ -102,8 +102,20 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
         warnings.append(f"{redundant} of {len(train)} combinations traded exactly like another combination "
                         "(some parameter values do not change the positions, e.g. a filter that never binds); "
                         "only distinct candidates were retested.")
-    median_train = train[metric].median()
-    if pd.notna(median_train) and median_train <= 0:
+    never = int((train["n_trades"] == 0).sum())
+    if never:
+        warnings.append(f"{never} of {len(train)} combinations never traded on train: a condition is never true "
+                        "for those thresholds (compare them with the typical feature values).")
+    activity = result.condition_activity
+    for key, share in activity.get("shares", {}).items():
+        if share is not None and share >= 0.99:
+            warnings.append(f"Condition '{key}' is true on {share:.0%} of train bars ({activity['scope']}): it "
+                            "filters almost nothing, so its threshold is probably outside the feature's typical values.")
+        elif share is not None and share <= 0.01:
+            warnings.append(f"Condition '{key}' is true on only {share:.1%} of train bars ({activity['scope']}): "
+                            "the strategy can rarely trade; check the threshold against the feature's typical values.")
+    median_train = _median(train[metric])
+    if median_train is not None and median_train <= 0:
         warnings.append(f"Median train {metric} is {median_train:.2f}: the idea fails for most parameter values, "
                         "so the top results may be luck.")
     if not result.selected:
@@ -128,11 +140,11 @@ def robustness_warnings(result: ExperimentResult, space: dict[str, list]) -> lis
             f"({verdict}). Slower signals or fewer position changes keep more of the gross return."
         )
 
-    t, v = table[f"train_{metric}"].median(), table[f"validation_{metric}"].median()
-    if pd.notna(v) and v <= 0:
+    t, v = _median(table[f"train_{metric}"]), _median(table[f"validation_{metric}"])
+    if v is not None and v <= 0:
         warnings.append(f"Median validation {metric} of the top {len(table)} is {v:.2f}: "
                         "the train results did not carry over.")
-    elif pd.notna(t) and pd.notna(v) and t > 0 and v < 0.5 * t:
+    elif t is not None and v is not None and t > 0 and v < 0.5 * t:
         warnings.append(f"Top candidates kept less than half their train {metric} on validation "
                         f"(median {t:.2f} -> {v:.2f}): likely over-fit.")
     few = int((table["validation_n_trades"] < s.min_train_trades).sum())
@@ -161,6 +173,12 @@ def _benchmark_metric(result: ExperimentResult, period: str, name: str, metric: 
 
 def _fmt(value: float | None, spec: str) -> str:
     return "n/a" if value is None else format(value, spec)
+
+
+def _median(values: pd.Series) -> float | None:
+    """Median of the defined values; None (and no numpy 'empty slice' warning) if there are none."""
+    values = values.dropna()
+    return _num(values.median()) if len(values) else None
 
 
 def _num(value: Any) -> float | None:

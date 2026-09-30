@@ -31,8 +31,8 @@
 | `UNSUPPORTED_OPERATOR` | An operator or logic not in the registries |
 | `INVALID_SPEC` | A bad position, a lookback out of range, a non-finite threshold, unknown keys, duplicate ids, an unknown parameter name, or an empty research strategy |
 | `MALFORMED_JSON` | The reply isn't a parseable JSON object, or was cut off |
-| `SEARCH_SPACE_TOO_LARGE` | The parameter space's Cartesian product is over the candidate budget |
-| `DUPLICATE_PROPOSAL` | The same rules and parameter space were already tested in this run |
+| `SEARCH_SPACE_TOO_LARGE` | The parameter space's Cartesian product is over the candidate budget (explicit lists only; ranges are sized to fit) |
+| `DUPLICATE_PROPOSAL` | The same rules and parameter space were already tested, or every combination was already tested, in this run |
 
 Examples are in `configs/strategies/` (research), `configs/benchmarks/` (benchmarks) and `configs/proposals/` (an LLM-format proposal).
 

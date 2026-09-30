@@ -46,6 +46,7 @@ POSITIONS = (-1, 0, 1)
 SWEEPABLE_PARAMS = ("lookback", "threshold")
 MAX_LOOKBACK = 10_000  # bars
 MAX_CONDITIONS = 8
+MAX_VALUES_PER_RANGE = 12  # a {"min", "max"} range is expanded into at most this many values
 
 
 class SpecError(ValueError):
@@ -128,6 +129,18 @@ class StrategySpec:
     def to_json(self, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
+    def identity(self) -> str:
+        """Canonical form of the concrete trading rules, ignoring name, description, condition ids and
+        condition order. Two specs with the same identity always produce the same positions."""
+        conditions = sorted(
+            json.dumps({"feature": c.feature, "field": c.field, "operator": c.operator,
+                        "lookback": c.lookback, "threshold": float(c.threshold)}, sort_keys=True)
+            for c in self.conditions
+        )
+        return json.dumps({"conditions": conditions, "logic": self.logic if len(conditions) > 1 else "AND",
+                           "true_position": self.true_position, "false_position": self.false_position},
+                          sort_keys=True)
+
     def describe(self) -> str:
         """Readable rule, e.g. 'long if momentum(close, 24) > 0.02 AND ..., else flat'."""
         if not self.conditions:
@@ -165,13 +178,17 @@ class ResearchProposal:
 
     hypothesis: str
     strategy: StrategySpec
-    parameter_space: dict[str, list[int | float]] = field(default_factory=dict)
+    parameter_space: dict[str, list[int | float]] = field(default_factory=dict)  # explicit values
     rationale: str = ""
+    requested_space: dict[str, Any] = field(default_factory=dict)  # as written, ranges not yet expanded
 
     @classmethod
     def from_dict(cls, data: Any, max_candidates: int | None = None) -> ResearchProposal:
         """Validate everything before anything is evaluated: spec, parameter names, every value,
-        and the size of the search (SEARCH_SPACE_TOO_LARGE above `max_candidates`)."""
+        and the size of the search (SEARCH_SPACE_TOO_LARGE above `max_candidates`).
+
+        A parameter is either an explicit list of values or a range {"min": a, "max": b} that is
+        expanded to fill the candidate budget (see expand_parameter_space)."""
         if not isinstance(data, dict):
             raise SpecError(INVALID_SPEC, "proposal must be a JSON object")
         _reject_unknown_keys(data, {"hypothesis", "strategy", "parameter_space", "rationale"}, "proposal")
@@ -184,9 +201,13 @@ class ResearchProposal:
         if not strategy.conditions:
             raise SpecError(INVALID_SPEC, "a research strategy needs at least one condition "
                                           "(unconditional strategies are benchmarks)")
-        space = data.get("parameter_space", {})
-        if not isinstance(space, dict) or not all(isinstance(v, list) and v for v in space.values()):
-            raise SpecError(INVALID_SPEC, "'parameter_space' must map parameter names to non-empty lists")
+        requested = data.get("parameter_space", {})
+        if not isinstance(requested, dict) or not all(
+            (isinstance(v, list) and v) or isinstance(v, dict) for v in requested.values()
+        ):
+            raise SpecError(INVALID_SPEC, "'parameter_space' must map parameter names to non-empty lists "
+                                          'or to ranges {"min": number, "max": number}')
+        space = expand_parameter_space(requested, max_candidates)
         n_candidates = math.prod(len(v) for v in space.values())
         if max_candidates is not None and n_candidates > max_candidates:
             raise SpecError(SEARCH_SPACE_TOO_LARGE,
@@ -194,7 +215,7 @@ class ResearchProposal:
         for name, values in space.items():  # every value must produce a valid strategy
             for value in values:
                 strategy.with_parameters({name: value})
-        return cls(hypothesis.strip(), strategy, space, data.get("rationale", "").strip())
+        return cls(hypothesis.strip(), strategy, space, data.get("rationale", "").strip(), dict(requested))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -202,6 +223,7 @@ class ResearchProposal:
             "rationale": self.rationale,
             "strategy": self.strategy.to_dict(),
             "parameter_space": self.parameter_space,
+            "requested_space": self.requested_space,
         }
 
     def key(self) -> str:
@@ -224,6 +246,45 @@ class ResearchProposal:
         s = self.strategy
         return json.dumps({"conditions": sorted(conditions), "logic": s.logic if len(conditions) > 1 else "AND",
                            "true_position": s.true_position, "false_position": s.false_position}, sort_keys=True)
+
+
+# -------------------------------------------------------------------- parameter ranges
+
+
+def expand_parameter_space(space: dict[str, Any], max_candidates: int | None = None) -> dict[str, list]:
+    """Turn {"min": a, "max": b} ranges into value lists that fit the candidate budget.
+
+    Explicit lists are kept as given. All ranges get the same number of points k: the largest k
+    (between 2 and MAX_VALUES_PER_RANGE) for which the whole grid fits `max_candidates`. Lookbacks
+    are spaced geometrically and rounded to whole bars (so hours-to-weeks ranges are covered evenly
+    in relative terms); thresholds are spaced evenly. Deterministic for the same inputs.
+    """
+    ranges = [name for name, value in space.items() if isinstance(value, dict)]
+    if not ranges:
+        return dict(space)
+    fixed = math.prod(len(value) for value in space.values() if isinstance(value, list))
+    k = MAX_VALUES_PER_RANGE
+    if max_candidates is not None:
+        k = int((max_candidates / fixed) ** (1 / len(ranges)) + 1e-9)
+        k = max(2, min(MAX_VALUES_PER_RANGE, k))
+    return {name: _range_values(name, value, k) if isinstance(value, dict) else value
+            for name, value in space.items()}
+
+
+def _range_values(name: str, bounds: dict[str, Any], k: int) -> list[int | float]:
+    if set(bounds) != {"min", "max"} or not all(_is_number(bounds[b]) for b in ("min", "max")):
+        raise SpecError(INVALID_SPEC, f'range for {name!r} must be {{"min": number, "max": number}}')
+    lo, hi = sorted((float(bounds["min"]), float(bounds["max"])))
+    if name.rpartition(".")[2] == "lookback":
+        lo_bars, hi_bars = max(1, round(lo)), max(1, round(hi))
+        steps = [lo_bars * (hi_bars / lo_bars) ** (i / (k - 1)) for i in range(k)]
+        return sorted({round(v) for v in steps})
+    values = [float(f"{lo + (hi - lo) * i / (k - 1):.4g}") for i in range(k)]
+    return list(dict.fromkeys(values))  # deduplicate, keep order
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 # -------------------------------------------------------------------- validation

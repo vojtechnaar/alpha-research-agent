@@ -298,10 +298,36 @@ def test_returns_with_lookback_is_repaired_using_the_error_hint(settings: Experi
     assert "use momentum with lookback N" in generator.calls[1][-1]["content"]  # the repair prompt carries the hint
 
 
-@pytest.mark.parametrize("budget, values", [(20000, "5-8 values"), (1000, "4-7 values"), (100, "3-5 values")])
-def test_search_guidance_scales_with_the_candidate_budget(budget: int, values: str) -> None:
-    text = prompts.system_prompt(max_candidates=budget, transaction_cost=0.001)
-    assert values in text and f"up to {budget} per hypothesis" in text and "WIDE range" in text
+def test_prompt_asks_for_ranges_and_shows_training_feature_ranges(settings: ExperimentSettings) -> None:
+    from src.agents.research import build_system_prompt
+
+    text = build_system_prompt(make_hourly_data(), settings)
+    assert '{"min": a, "max": b}' in text and "budget of 1000 combinations" in text
+    assert "TYPICAL FEATURE VALUES on the training data" in text
+    for name in FEATURE_REGISTRY:
+        assert f"- {name}(" in text  # one line of typical values per registered feature
+
+
+def test_range_proposal_is_expanded_to_the_budget() -> None:
+    ranged = proposal(parameter_space={"mom.lookback": {"min": 6, "max": 720}, "mom.threshold": {"min": 0.0, "max": 0.02}})
+    parsed = parse_proposal(json.dumps(ranged), max_candidates=100)
+    lookbacks, thresholds = parsed.parameter_space["mom.lookback"], parsed.parameter_space["mom.threshold"]
+    assert len(lookbacks) * len(thresholds) <= 100 and len(lookbacks) == len(thresholds) == 10
+    assert lookbacks[0] == 6 and lookbacks[-1] == 720 and all(isinstance(v, int) for v in lookbacks)
+    assert thresholds[0] == 0.0 and thresholds[-1] == 0.02
+    assert parsed.requested_space == ranged["parameter_space"]
+
+
+def test_already_tested_grid_is_rejected_but_partial_overlap_is_allowed(settings: ExperimentSettings, tmp_path: Path) -> None:
+    subset = proposal(hypothesis="Same grid, fewer values.", parameter_space={"mom.lookback": [24, 6], "mom.threshold": [0.0]})
+    overlap = proposal(hypothesis="Longer lookbacks.", parameter_space={"mom.lookback": [24, 168], "mom.threshold": [0.0]})
+    generator = FakeGenerator([json.dumps(PROPOSAL), json.dumps(subset), json.dumps(overlap)])
+    records = run(generator, settings, tmp_path, hypotheses=2)
+    assert [r.status for r in records] == ["completed", "completed"]
+    rejected = records[1].llm["attempts"][0]
+    assert rejected["code"] == DUPLICATE_PROPOSAL
+    assert "all 2 parameter combinations were already tested in experiment 1" in rejected["error"]
+    assert records[1].hypothesis == "Longer lookbacks."  # 168 is new, so the refinement ran
 
 
 def test_feedback_shows_exploration_coverage(settings: ExperimentSettings, tmp_path: Path) -> None:
@@ -334,3 +360,12 @@ def test_truncated_reply_is_reported_with_how_to_shorten_it(settings: Experiment
     assert first["code"] == MALFORMED_JSON and "cut off at the token limit" in first["error"]
     assert first["hit_max_new_tokens"] is True
     assert "compact single-line JSON" in generator.calls[1][-1]["content"]
+
+
+def test_feedback_shows_condition_activity_and_compact_search(settings: ExperimentSettings, tmp_path: Path) -> None:
+    ranged = proposal(parameter_space={"mom.lookback": {"min": 6, "max": 168}, "mom.threshold": [0.0, 0.01]})
+    (record,) = run(FakeGenerator([json.dumps(ranged)]), settings, tmp_path, hypotheses=1)
+    text = prompts.describe_experiment(record)
+    assert "mom.lookback 6..168 (" in text  # long value lists are summarised
+    assert "CONDITIONS (best train candidate, share of train bars where true): mom " in text
+    assert record.requested_parameter_space == ranged["parameter_space"]

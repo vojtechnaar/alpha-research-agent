@@ -13,8 +13,10 @@ from src.strategies.schema import (
     UNSUPPORTED_FEATURE,
     UNSUPPORTED_OPERATOR,
     ResearchProposal,
+    SEARCH_SPACE_TOO_LARGE,
     SpecError,
     StrategySpec,
+    expand_parameter_space,
 )
 
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
@@ -136,3 +138,40 @@ def test_describe_is_readable() -> None:
     assert StrategySpec.from_dict(SPEC).describe() == (
         "long if momentum(close, 24) > 0.02 AND volatility(close, 12) < 0.03, else flat"
     )
+
+
+def test_identity_ignores_names_ids_and_order() -> None:
+    a = StrategySpec.from_dict(SPEC)
+    b = StrategySpec.from_dict({**SPEC, "name": "other", "conditions": [
+        {**SPEC["conditions"][1], "id": "x"}, {**SPEC["conditions"][0], "id": "y"}]})
+    assert a.identity() == b.identity()
+    assert a.identity() != a.with_parameters({"momentum.lookback": 48}).identity()
+
+
+def test_expand_parameter_space_fills_ranges_to_the_budget() -> None:
+    space = {"m.lookback": {"min": 12, "max": 336}, "m.threshold": {"min": -0.02, "max": 0.02}, "v.threshold": [0.004, 0.008]}
+    expanded = expand_parameter_space(space, max_candidates=200)
+    assert expanded["v.threshold"] == [0.004, 0.008]  # explicit lists are kept
+    lookbacks, thresholds = expanded["m.lookback"], expanded["m.threshold"]
+    assert len(lookbacks) == len(thresholds) == 10  # 10 * 10 * 2 = 200
+    assert lookbacks == sorted(set(lookbacks)) and lookbacks[0] == 12 and lookbacks[-1] == 336
+    assert lookbacks[1] / lookbacks[0] > lookbacks[-1] / lookbacks[-2] - 0.2  # roughly geometric
+    assert thresholds[0] == -0.02 and thresholds[-1] == 0.02
+    steps = [b - a for a, b in zip(thresholds, thresholds[1:])]
+    assert max(steps) - min(steps) < 1e-5  # evenly spaced (values are rounded to 4 significant digits)
+    assert expand_parameter_space({"m.lookback": {"min": 2, "max": 5}}, 1000)["m.lookback"] == [2, 3, 4, 5]
+    assert expand_parameter_space(space) == expand_parameter_space(space)  # deterministic
+
+
+@pytest.mark.parametrize("bad", [{"min": 5}, {"min": 5, "max": "x"}, {"min": True, "max": 10}, {"lo": 1, "hi": 2}])
+def test_invalid_ranges_are_rejected(bad: dict) -> None:
+    with pytest.raises(SpecError) as info:
+        ResearchProposal.from_dict({"hypothesis": "h", "strategy": SPEC, "parameter_space": {"momentum.lookback": bad}})
+    assert info.value.code == INVALID_SPEC
+
+
+def test_explicit_lists_over_budget_are_still_rejected() -> None:
+    with pytest.raises(SpecError) as info:
+        ResearchProposal.from_dict({"hypothesis": "h", "strategy": SPEC, "parameter_space": {
+            "momentum.lookback": list(range(10, 30)), "momentum.threshold": {"min": 0, "max": 0.1}}}, max_candidates=10)
+    assert info.value.code == SEARCH_SPACE_TOO_LARGE

@@ -21,7 +21,7 @@ import pandas as pd
 
 from src.backtest.metrics import HOURS_PER_YEAR
 from src.research.benchmarks import evaluate_benchmarks
-from src.strategies.evaluator import period_slice
+from src.strategies.evaluator import evaluate_conditions, period_slice
 from src.strategies.schema import StrategySpec
 from src.strategies.sweep import (
     DEFAULT_MAX_CANDIDATES,
@@ -99,6 +99,7 @@ class ExperimentResult:
     comparison: pd.DataFrame             # selected candidates, train vs validation side by side
     benchmarks: dict[str, pd.DataFrame]  # "train"/"validation" -> one row per benchmark
     timing: dict[str, Any]
+    condition_activity: dict[str, Any]   # {"scope": ..., "shares": {condition id: share of train bars true}}
 
 
 def select_top(train: pd.DataFrame, metric: str, n: int, min_trades: int = 0, distinct: bool = True) -> list[int]:
@@ -130,6 +131,17 @@ def compare(train: pd.DataFrame, validation: pd.DataFrame, selected: list[int], 
         table[f"validation_{m}"] = v[m]
     table[f"{metric}_change"] = table[f"validation_{metric}"] - table[f"train_{metric}"]
     return table.reset_index()
+
+
+def condition_activity(data: pd.DataFrame, spec: StrategySpec, period: Period) -> dict[str, float | None]:
+    """Share of bars in `period` where each condition is true (among bars where it is defined).
+
+    ~0% means a condition blocks (almost) every trade, ~100% means it filters (almost) nothing;
+    both usually mean a threshold outside the feature's range.
+    """
+    rows = period_slice(data, period.start, period.end)
+    table = evaluate_conditions(data, spec).iloc[rows]
+    return {key: float(column.mean()) if column.notna().any() else None for key, column in table.items()}
 
 
 def truncate_after(data: pd.DataFrame, end: str | None) -> pd.DataFrame:
@@ -167,6 +179,9 @@ def run_experiment(
         validation = train.iloc[0:0]
     validation_seconds = time.perf_counter() - started
 
+    best_spec, scope = (candidates[selected[0]][1], "best train candidate") if selected else (base, "base strategy")
+    activity = {"scope": scope, "shares": condition_activity(data, best_spec, settings.train)}
+
     benchmark_tables = {
         name: evaluate_benchmarks(data, benchmarks or {}, period, evaluator=evaluator, **common)
         for name, period in (("train", settings.train), ("validation", settings.validation))
@@ -185,4 +200,5 @@ def run_experiment(
             "validation_seconds": round(validation_seconds, 3),
             "ms_per_train_candidate": round(1000 * train_seconds / max(len(candidates), 1), 2),
         },
+        condition_activity=activity,
     )

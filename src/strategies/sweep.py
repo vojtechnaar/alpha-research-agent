@@ -128,16 +128,16 @@ def summarize_sweep(results: pd.DataFrame, metric: str = "sharpe", top: int = 5)
     """
     params = [c for c in results.columns if "." in c]  # swept parameters are named "<id>.<param>"
     values = results[metric].dropna()
-    best = results.sort_values(metric, ascending=False).head(top)
+    best = results.dropna(subset=[metric]).sort_values(metric, ascending=False).head(top)
     return {
         "n_candidates": int(len(results)),
         "metric": metric,
-        "distribution": {
-            "min": _round(values.min()),
-            **{f"p{int(q * 100)}": _round(values.quantile(q)) for q in (0.1, 0.25)},
-            "median": _round(values.median()),
-            **{f"p{int(q * 100)}": _round(values.quantile(q)) for q in (0.75, 0.9)},
-            "max": _round(values.max()),
+        "distribution": {  # all None when no candidate has a defined metric (e.g. none traded)
+            "min": _round(values.min()) if len(values) else None,
+            **{f"p{int(q * 100)}": _round(values.quantile(q)) if len(values) else None for q in (0.1, 0.25)},
+            "median": _round(values.median()) if len(values) else None,
+            **{f"p{int(q * 100)}": _round(values.quantile(q)) if len(values) else None for q in (0.75, 0.9)},
+            "max": _round(values.max()) if len(values) else None,
             "share_positive": _round((values > 0).mean()) if len(values) else None,
             "n_undefined": int(results[metric].isna().sum()),
         },

@@ -30,11 +30,12 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from src.agents.proposals import TRUNCATED_HINT, parse_proposal
+from src.agents.proposals import TRUNCATED_HINT, candidate_identities, parse_proposal
 from src.backends import BACKENDS, get_evaluator
 from src.agents.prompts import feedback_message, initial_request, repair_message, system_prompt
 from src.research.benchmarks import DEFAULT_BENCHMARKS_DIR, PROJECT_ROOT, load_benchmarks
 from src.research.experiment import ExperimentSettings, Period, run_experiment
+from src.research.feature_ranges import feature_ranges
 from src.research.records import ExperimentRecord, add_results, append_record, new_record
 from src.research.report import format_record
 from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError, StrategySpec
@@ -75,6 +76,7 @@ def request_proposal(
     seen: Mapping[str, str],
     max_retries: int,
     seed: int | None,
+    tested: Mapping[str, str] | None = None,
 ) -> tuple[ResearchProposal | None, list[dict[str, Any]], SpecError | None]:
     """Ask for a proposal; on a validation error, show the error and ask for a repair.
 
@@ -93,7 +95,7 @@ def request_proposal(
         info = {"attempt": attempt, "response": text, "seconds": round(time.perf_counter() - started, 2),
                 **getattr(generator, "last_stats", {})}
         try:
-            proposal = parse_proposal(text, max_candidates, seen)
+            proposal = parse_proposal(text, max_candidates, seen, tested)
         except SpecError as exc:
             if exc.code == MALFORMED_JSON and info.get("hit_max_new_tokens"):
                 exc = SpecError(MALFORMED_JSON, TRUNCATED_HINT)
@@ -124,11 +126,16 @@ def run_research(
     run_id: str = "",
     evaluator: CandidateEvaluator = evaluate_candidates,
     log: Callable[[str], None] = print,
+    system: str | None = None,
 ) -> list[ExperimentRecord]:
-    """Run at most `loop.hypotheses` research iterations; returns their records (also saved as JSONL)."""
-    system = system_prompt(settings.max_candidates, settings.transaction_cost)
+    """Run at most `loop.hypotheses` research iterations; returns their records (also saved as JSONL).
+
+    `system` defaults to build_system_prompt(data, settings) (rules, primitives, train feature ranges).
+    """
+    system = system or build_system_prompt(data, settings)
     records: list[ExperimentRecord] = []
     seen: dict[str, str] = {}  # proposal key -> label of the experiment that ran it
+    tested: dict[str, str] = {}  # identity of every backtested combination -> its experiment
     consecutive_rejections = 0
 
     for iteration in range(loop.hypotheses):
@@ -137,7 +144,7 @@ def run_research(
         messages = [{"role": "system", "content": system}, {"role": "user", "content": context}]
         seed = None if loop.seed is None else loop.seed + 1000 * iteration
         proposal, attempts, error = request_proposal(
-            generator, messages, settings.max_candidates, seen, loop.max_proposal_retries, seed
+            generator, messages, settings.max_candidates, seen, loop.max_proposal_retries, seed, tested
         )
         common = dict(dataset=dataset, data_path=data_path, run_id=run_id, iteration=iteration,
                       llm={"context": context, "seed": seed, "attempts": attempts})
@@ -147,11 +154,13 @@ def run_research(
             record = new_record(settings, "rejected", error=str(error), **common)
         else:
             consecutive_rejections = 0
-            seen[proposal.key()] = f"experiment {iteration + 1} ('{proposal.hypothesis}')"
+            label = f"experiment {iteration + 1} ('{proposal.hypothesis}')"
+            seen[proposal.key()] = label
             record = new_record(
                 settings, "completed", hypothesis=proposal.hypothesis, rationale=proposal.rationale,
                 strategy_spec=proposal.strategy.to_dict(), strategy_description=proposal.strategy.describe(),
-                parameter_space=proposal.parameter_space, **common,
+                parameter_space=proposal.parameter_space, requested_parameter_space=proposal.requested_space,
+                **common,
             )
             try:
                 result = run_experiment(data, proposal.strategy, proposal.parameter_space, settings,
@@ -161,6 +170,8 @@ def run_research(
                 csv_path.parent.mkdir(parents=True, exist_ok=True)
                 result.train.to_csv(csv_path, index=False)
                 record.sweep_csv = str(csv_path)
+                for identity in candidate_identities(proposal):
+                    tested.setdefault(identity, label)
             except Exception as exc:  # recorded and reported; one bad experiment should not end the run
                 record.status, record.error = "failed", f"{type(exc).__name__}: {exc}"
 
@@ -171,6 +182,12 @@ def run_research(
             log(f"Stopping early: {consecutive_rejections} consecutive proposals were rejected.")
             break
     return records
+
+
+def build_system_prompt(data: pd.DataFrame, settings: ExperimentSettings) -> str:
+    """System prompt including the typical feature values on the TRAIN period only."""
+    return system_prompt(settings.max_candidates, settings.transaction_cost,
+                         ranges=feature_ranges(data, settings.train))
 
 
 class ReplayGenerator:
@@ -259,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         generator = QwenGenerator(args.model_id, device=args.device, max_new_tokens=args.max_new_tokens,
                                   temperature=args.temperature, top_p=args.top_p, top_k=args.top_k)
 
+    system = build_system_prompt(data, settings)
     run_id = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
     run_dir = args.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -273,13 +291,13 @@ def main(argv: list[str] | None = None) -> int:
         "loop": asdict(loop),
         "generator": getattr(generator, "settings", {}),
         "benchmarks": {name: spec.to_dict() for name, spec in benchmarks.items()},
-        "system_prompt": system_prompt(settings.max_candidates, settings.transaction_cost),
+        "system_prompt": system,
     }, indent=2))
     print(f"Run {run_id}: at most {loop.hypotheses} hypotheses, <= {settings.max_candidates} candidates each, "
           f"cost {settings.transaction_cost:g}. Records: {run_dir / 'experiments.jsonl'}")
 
     records = run_research(generator, data, settings, loop, run_dir, benchmarks, dataset, str(args.data), run_id,
-                           evaluator=evaluator)
+                           evaluator=evaluator, system=system)
     print(f"\nDone: {len(records)} iterations "
           f"({sum(r.status == 'completed' for r in records)} completed, "
           f"{sum(r.status == 'rejected' for r in records)} rejected, {sum(r.status == 'failed' for r in records)} failed).")

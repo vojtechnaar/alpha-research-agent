@@ -10,6 +10,7 @@ import re
 from collections.abc import Mapping, Set
 
 from src.strategies.schema import DUPLICATE_PROPOSAL, MALFORMED_JSON, ResearchProposal, SpecError
+from src.strategies.sweep import parameter_grid
 
 
 TRUNCATED_HINT = ("the reply was cut off at the token limit before the JSON was complete. Make it shorter: "
@@ -40,13 +41,23 @@ def extract_json(text: str) -> dict:
     return data
 
 
+def candidate_identities(proposal: ResearchProposal) -> list[str]:
+    """StrategySpec.identity() of every combination the proposal would test."""
+    return [proposal.strategy.with_parameters(params).identity() for params in parameter_grid(proposal.parameter_space)]
+
+
 def parse_proposal(
-    text: str, max_candidates: int, seen: Mapping[str, str] | Set[str] | None = None
+    text: str,
+    max_candidates: int,
+    seen: Mapping[str, str] | Set[str] | None = None,
+    tested: Mapping[str, str] | None = None,
 ) -> ResearchProposal:
-    """Parse and fully validate a reply; reject repeats of already-run experiments.
+    """Parse and fully validate a reply; reject experiments that would add nothing new.
 
     `seen` maps ResearchProposal.key() to a label of the earlier experiment (e.g. "experiment 1
-    ('...')"), so the rejection tells the model exactly which experiment it repeated.
+    ('...')"): an exact repeat is rejected, naming that experiment. `tested` maps the identity of
+    every combination already backtested to its experiment: a proposal whose combinations were
+    ALL tested before is rejected too. Partial overlap is allowed (a refinement adds new values).
     """
     proposal = ResearchProposal.from_dict(extract_json(text), max_candidates=max_candidates)
     if seen is not None and proposal.key() in seen:
@@ -54,4 +65,11 @@ def parse_proposal(
         raise SpecError(DUPLICATE_PROPOSAL, f"this exact strategy and parameter space repeats {earlier}. Do not "
                                             "resubmit it: use different features or conditions, or clearly "
                                             "different parameter ranges.")
+    if tested:
+        identities = candidate_identities(proposal)
+        if all(identity in tested for identity in identities):
+            earlier = ", ".join(sorted({tested[identity] for identity in identities})[:3])
+            raise SpecError(DUPLICATE_PROPOSAL, f"all {len(identities)} parameter combinations were already tested "
+                                                f"in {earlier}. Test a different idea, or values outside the "
+                                                "ranges already tested.")
     return proposal

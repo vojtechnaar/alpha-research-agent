@@ -40,6 +40,10 @@ def format_record(record: ExperimentRecord) -> str:
                      f"{_f(v.get('median'))}, best {_f(v.get('best'))}, worst {_f(v.get('worst'))}, "
                      f"median change vs train {_f(v.get('median_change'))}")
         lines.append("\n" + _comparison_table(record))
+    activity = record.condition_activity
+    if activity.get("shares"):
+        lines.append(f"CONDITIONS ({activity.get('scope')}, share of train bars true): "
+                     + ", ".join(f"{key} {_pct(share)}" for key, share in activity["shares"].items()))
     c = record.costs
     if c:
         lines.append(f"COSTS ({c.get('scope')}, train): ~{_f(c.get('median_trades_per_year'), '.0f')} trades/year, "

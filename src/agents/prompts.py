@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from typing import Any
 
+from src.research.feature_ranges import format_ranges
 from src.research.records import ExperimentRecord
 from src.strategies.features import FEATURE_REGISTRY
 from src.strategies.operators import LOGIC_REGISTRY, OPERATOR_REGISTRY
-from src.strategies.schema import FIELDS, POSITION_NAMES, POSITIONS, SpecError, StrategySpec
+from src.strategies.schema import FIELDS, MAX_VALUES_PER_RANGE, POSITION_NAMES, POSITIONS, SpecError, StrategySpec
 
 # Shows the JSON structure only. Kept deliberately plain (one condition): a small model tends to
 # copy whatever strategy the example contains, so the example must not be a promising idea.
@@ -27,7 +29,7 @@ EXAMPLE_PROPOSAL = {
         ],
         "logic": "AND", "true_position": 1, "false_position": 0,
     },
-    "parameter_space": {"z.lookback": [72, 168, 336], "z.threshold": [-2.5, -2.0, -1.5]},
+    "parameter_space": {"z.lookback": {"min": 48, "max": 720}, "z.threshold": {"min": -3.0, "max": -1.0}},
 }
 
 
@@ -48,21 +50,23 @@ def available_primitives() -> str:
 
 
 def search_guidance(max_candidates: int) -> str:
-    """How large and how wide a parameter search should be, scaled to the candidate budget.
+    """How to specify the parameter search: ranges that the engine fills to the candidate budget.
 
-    With a fast backend (large budget) a wide grid costs almost nothing and makes the parameter
-    sensitivity informative; the multiple-testing warning and validation retest guard against luck.
+    The LLM only writes each range's endpoints (a short reply, which matters because generation is
+    the bottleneck); the engine chooses the grid (see schema.expand_parameter_space).
     """
-    values = "5-8" if max_candidates >= 5000 else "4-7" if max_candidates >= 500 else "3-5"
-    return (f"The engine tests every combination, up to {max_candidates} per hypothesis (the product of the "
-            f"list lengths must not exceed it). Use {values} values per swept parameter spanning a WIDE range: "
-            "lookbacks from a few hours to several weeks (e.g. 6 to 720) and thresholds across the feature's "
-            "typical range, so the parameter sensitivity shows where an effect lives. Narrow ranges put the best "
-            "value at the edge of the grid.")
+    return (f'Give each swept parameter a RANGE {{"min": a, "max": b}}: the engine fills in up to '
+            f"{MAX_VALUES_PER_RANGE} values per range (lookbacks spaced geometrically, thresholds evenly) so the "
+            f"grid uses the budget of {max_candidates} combinations. Choose WIDE ranges, e.g. lookbacks from a few "
+            "hours to several weeks (6 to 720) and thresholds across the feature's typical values, so the "
+            "parameter sensitivity shows where an effect lives. An explicit list [v1, v2, ...] is also allowed "
+            "when only specific values make sense.")
 
 
-def system_prompt(max_candidates: int, transaction_cost: float, bar: str = "1-hour") -> str:
-    """Role, rules, primitives and output format."""
+def system_prompt(max_candidates: int, transaction_cost: float, bar: str = "1-hour",
+                  ranges: list[dict[str, Any]] | None = None) -> str:
+    """Role, rules, primitives (with typical values on the training data, if given) and output format."""
+    typical = f"\n\n{format_ranges(ranges)}" if ranges else ""
     return f"""You are a quantitative researcher. You test hypotheses about {bar} crypto OHLCV bars by \
 proposing rule-based strategies. A numerical engine runs the parameter search and backtests; \
 you only decide WHAT to test.
@@ -72,7 +76,7 @@ are combined with AND/OR. When the combination is true the position is true_posi
 false_position (flat while a feature is undefined). Positions are set at a bar's close and earn \
 the next bar's return. Each unit of position change costs {transaction_cost:g} of notional.
 
-{available_primitives()}
+{available_primitives()}{typical}
 
 Output format: exactly one JSON object with keys "hypothesis", "rationale", "strategy", \
 "parameter_space". Parameter names are "<condition id>.lookback" or "<condition id>.threshold". \
@@ -89,7 +93,7 @@ No Python, no CUDA, no markdown, no explanations.
 - Costs matter: every position change pays the cost, so a rule that flips every few bars pays it \
 thousands of times. Use the COSTS line of the feedback to see how often strategies traded.
 - You may refine an earlier idea with different parameter ranges, but never resubmit an identical experiment.
-- Parameter ranges must be sensible for each feature's threshold units. {search_guidance(max_candidates)}
+- Thresholds must be in each feature's units and within its typical values. {search_guidance(max_candidates)}
 - Explore: both long and short rules are allowed; use the EXPLORATION line of the feedback to try \
 features and position rules that have not been tested yet."""
 
@@ -115,7 +119,7 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
         lines.append(f"STRATEGY: {StrategySpec.from_dict(record.strategy_spec).describe()}")
     budget = f" (budget {record.max_candidates})" if record.max_candidates else ""
     lines.append(f"SEARCH: {record.n_candidates} candidates{budget}, "
-                 + "; ".join(f"{k} {v}" for k, v in (record.parameter_space or {}).items()))
+                 + "; ".join(f"{k} {_values(v)}" for k, v in (record.parameter_space or {}).items()))
     d, tp = record.train_summary.get("distribution", {}), record.train_period
     lines.append(f"TRAIN ({tp['start']} to {tp['end']}): {metric} median {_f(d.get('median'))}, "
                  f"p10 {_f(d.get('p10'))}, p90 {_f(d.get('p90'))}, best {_f(d.get('max'))}, "
@@ -129,6 +133,10 @@ def describe_experiment(record: ExperimentRecord, include_validation: bool = Tru
                      f"worst {_f(v.get('worst'))}")
         lines.append(f"GENERALIZATION: median {metric} of the selected went {_f(v.get('train_median_of_selected'))} "
                      f"(train) -> {_f(v.get('median'))} (validation), change {_f(v.get('median_change'))}")
+    activity = record.condition_activity
+    if activity.get("shares"):
+        lines.append(f"CONDITIONS ({activity.get('scope')}, share of train bars where true): "
+                     + ", ".join(f"{key} {_pct(share)}" for key, share in activity["shares"].items()))
     c = record.costs
     if c:
         lines.append(f"COSTS ({c.get('scope')}, train): ~{_f(c.get('median_trades_per_year'), '.0f')} trades/year "
@@ -186,3 +194,8 @@ def _f(value: float | None, spec: str = ".2f") -> str:
 
 def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{100 * value:.0f}%"
+
+
+def _values(values: list) -> str:
+    """Compact form of a swept value list: long lists become 'first..last (n values)'."""
+    return f"{values[0]}..{values[-1]} ({len(values)} values)" if len(values) > 5 else str(values)

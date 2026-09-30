@@ -30,7 +30,7 @@ from src.research.summary import (
     summarize_validation,
 )
 
-SCHEMA_VERSION = 2  # v2 added `costs`; v1 records still load (missing fields get defaults)
+SCHEMA_VERSION = 3  # v2 added `costs`; v3 `requested_parameter_space`, `condition_activity`. Older records load.
 STATUSES = ("completed", "rejected", "failed")  # rejected: invalid LLM proposal; failed: evaluation error
 
 
@@ -53,12 +53,14 @@ class ExperimentRecord:
     rationale: str = ""
     strategy_spec: dict[str, Any] | None = None
     strategy_description: str = ""
-    parameter_space: dict[str, Any] | None = None
+    parameter_space: dict[str, Any] | None = None           # explicit values actually tested
+    requested_parameter_space: dict[str, Any] | None = None  # as proposed (may contain {"min", "max"} ranges)
     n_candidates: int = 0
     train_summary: dict[str, Any] = field(default_factory=dict)
     validation_summary: dict[str, Any] = field(default_factory=dict)
     comparison: list[dict[str, Any]] = field(default_factory=list)
     costs: dict[str, Any] = field(default_factory=dict)
+    condition_activity: dict[str, Any] = field(default_factory=dict)
     benchmarks: dict[str, Any] = field(default_factory=dict)
     parameter_sensitivity: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -121,6 +123,7 @@ def add_results(record: ExperimentRecord, result: ExperimentResult, space: dict[
     record.validation_summary = to_json_safe(summarize_validation(result))
     record.comparison = to_json_safe(result.comparison.to_dict("records"))
     record.costs = to_json_safe(summarize_costs(result))
+    record.condition_activity = to_json_safe(result.condition_activity)
     record.benchmarks = to_json_safe(summarize_benchmarks(result))
     record.warnings = robustness_warnings(result, space)
     record.timing = to_json_safe(result.timing)
