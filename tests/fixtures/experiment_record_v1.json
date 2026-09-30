@@ -1,0 +1,279 @@
+{
+ "experiment_id": "20260101-000000-fixture",
+ "timestamp": "2026-01-01T00:00:00+00:00",
+ "status": "completed",
+ "dataset": "SYN/USD",
+ "data_path": "synthetic",
+ "train_period": {
+  "start": "2020-01-01",
+  "end": "2020-03-15"
+ },
+ "validation_period": {
+  "start": "2020-03-15",
+  "end": "2020-05-01"
+ },
+ "transaction_cost": 0.001,
+ "cost_bps": 10.0,
+ "selection_metric": "sharpe",
+ "top_n": 2,
+ "max_candidates": 1000,
+ "min_train_trades": 1,
+ "hypothesis": "Momentum persists when volatility is low.",
+ "rationale": "fixture",
+ "strategy_spec": {
+  "name": "mom_lowvol",
+  "conditions": [
+   {
+    "feature": "momentum",
+    "field": "close",
+    "operator": ">",
+    "threshold": 0.0,
+    "lookback": 24,
+    "id": "mom"
+   },
+   {
+    "feature": "volatility",
+    "field": "close",
+    "operator": "<",
+    "threshold": 0.02,
+    "lookback": 24,
+    "id": "vol"
+   }
+  ],
+  "logic": "AND",
+  "true_position": 1,
+  "false_position": 0
+ },
+ "strategy_description": "long if momentum(close, 24) > 0 AND volatility(close, 24) < 0.02, else flat",
+ "parameter_space": {
+  "mom.lookback": [
+   6,
+   24,
+   72
+  ],
+  "mom.threshold": [
+   0.0,
+   0.01
+  ]
+ },
+ "n_candidates": 6,
+ "train_summary": {
+  "n_candidates": 6,
+  "metric": "sharpe",
+  "distribution": {
+   "min": -1.84,
+   "p10": -1.6793,
+   "p25": -1.5005,
+   "median": -0.969,
+   "p75": 0.6921,
+   "p90": 1.1615,
+   "max": 1.2363,
+   "share_positive": 0.3333,
+   "n_undefined": 0
+  },
+  "top": [
+   {
+    "mom.lookback": 24,
+    "mom.threshold": 0.01,
+    "sharpe": 1.2363,
+    "max_drawdown": -0.2215,
+    "n_trades": 144
+   },
+   {
+    "mom.lookback": 24,
+    "mom.threshold": 0.0,
+    "sharpe": 1.0867,
+    "max_drawdown": -0.2321,
+    "n_trades": 150
+   },
+   {
+    "mom.lookback": 6,
+    "mom.threshold": 0.01,
+    "sharpe": -0.4918,
+    "max_drawdown": -0.2032,
+    "n_trades": 295
+   }
+  ]
+ },
+ "validation_summary": {
+  "n_retested": 2,
+  "metric": "sharpe",
+  "median": 4.3536,
+  "best": 4.5887,
+  "worst": 4.1184,
+  "share_positive": 1.0,
+  "train_median_of_selected": 1.1615,
+  "median_change": 3.1921,
+  "train_best_candidate": {
+   "mom.lookback": 24.0,
+   "mom.threshold": 0.01,
+   "train_sharpe": 1.2363,
+   "validation_sharpe": 4.1184
+  }
+ },
+ "comparison": [
+  {
+   "candidate": 3,
+   "train_rank": 1,
+   "mom.lookback": 24,
+   "mom.threshold": 0.01,
+   "train_sharpe": 1.236262655964922,
+   "validation_sharpe": 4.118425153845551,
+   "train_annualized_return": 0.7683889080430748,
+   "validation_annualized_return": 13.100689531311325,
+   "train_max_drawdown": -0.22149434413199864,
+   "validation_max_drawdown": -0.21299886623826658,
+   "train_n_trades": 144,
+   "validation_n_trades": 95,
+   "train_exposure": 0.4380630630630631,
+   "validation_exposure": 0.5,
+   "train_annual_turnover": 710.2702702702703,
+   "validation_annual_turnover": 737.7659574468086,
+   "sharpe_change": 2.882162497880629
+  },
+  {
+   "candidate": 2,
+   "train_rank": 2,
+   "mom.lookback": 24,
+   "mom.threshold": 0.0,
+   "train_sharpe": 1.0866658420586077,
+   "validation_sharpe": 4.588726915599774,
+   "train_annualized_return": 0.6456723788736658,
+   "validation_annualized_return": 24.063776930563897,
+   "train_max_drawdown": -0.23214371023996638,
+   "validation_max_drawdown": -0.22285076300496054,
+   "train_n_trades": 150,
+   "validation_n_trades": 93,
+   "train_exposure": 0.5084459459459459,
+   "validation_exposure": 0.5824468085106383,
+   "train_annual_turnover": 739.8648648648649,
+   "validation_annual_turnover": 722.2340425531914,
+   "sharpe_change": 3.5020610735411664
+  }
+ ],
+ "benchmarks": {
+  "train": {
+   "buy_and_hold": {
+    "start": "2020-01-01T00:00:00+00:00",
+    "end": "2020-03-14T23:00:00+00:00",
+    "cumulative_return": 0.3185492821638396,
+    "annualized_return": 2.9117150760769857,
+    "sharpe": 1.9258697087737695,
+    "annualized_volatility": 0.935213063877998,
+    "max_drawdown": -0.23061820752870843,
+    "turnover": 1.0,
+    "n_trades": 1,
+    "exposure": 0.9994369369369369,
+    "n_bars": 1776
+   },
+   "flat": {
+    "start": "2020-01-01T00:00:00+00:00",
+    "end": "2020-03-14T23:00:00+00:00",
+    "cumulative_return": 0.0,
+    "annualized_return": 0.0,
+    "sharpe": null,
+    "annualized_volatility": 0.0,
+    "max_drawdown": 0.0,
+    "turnover": 0.0,
+    "n_trades": 0,
+    "exposure": 0.0,
+    "n_bars": 1776
+   },
+   "naive_momentum_24h": {
+    "start": "2020-01-01T00:00:00+00:00",
+    "end": "2020-03-14T23:00:00+00:00",
+    "cumulative_return": -0.15355481621693445,
+    "annualized_return": -0.5605735833367033,
+    "sharpe": -0.4161318985128289,
+    "annualized_volatility": 0.9321716502450134,
+    "max_drawdown": -0.500652454442585,
+    "turnover": 301.0,
+    "n_trades": 151,
+    "exposure": 0.9859234234234234,
+    "n_bars": 1776
+   }
+  },
+  "validation": {
+   "buy_and_hold": {
+    "start": "2020-03-15T00:00:00+00:00",
+    "end": "2020-04-30T23:00:00+00:00",
+    "cumulative_return": 1.2946257730989292,
+    "annualized_return": 631.8095309493935,
+    "sharpe": 7.1610058159816266,
+    "annualized_volatility": 0.9661499593429395,
+    "max_drawdown": -0.18385730656725308,
+    "turnover": 1.0,
+    "n_trades": 1,
+    "exposure": 0.999113475177305,
+    "n_bars": 1128
+   },
+   "flat": {
+    "start": "2020-03-15T00:00:00+00:00",
+    "end": "2020-04-30T23:00:00+00:00",
+    "cumulative_return": 0.0,
+    "annualized_return": 0.0,
+    "sharpe": null,
+    "annualized_volatility": 0.0,
+    "max_drawdown": 0.0,
+    "turnover": 0.0,
+    "n_trades": 0,
+    "exposure": 0.0,
+    "n_bars": 1128
+   },
+   "naive_momentum_24h": {
+    "start": "2020-03-15T00:00:00+00:00",
+    "end": "2020-04-30T23:00:00+00:00",
+    "cumulative_return": -0.04692258887248557,
+    "annualized_return": -0.3114899140968347,
+    "sharpe": 0.09898006290382141,
+    "annualized_volatility": 0.9688102577497388,
+    "max_drawdown": -0.43115821031500845,
+    "turnover": 187.0,
+    "n_trades": 94,
+    "exposure": 0.999113475177305,
+    "n_bars": 1128
+   }
+  }
+ },
+ "parameter_sensitivity": {
+  "mom.lookback": {
+   "6": -0.969,
+   "24": 1.1615,
+   "72": -1.6793
+  },
+  "mom.threshold": {
+   "0.0": -0.6261,
+   "0.01": -0.3652
+  }
+ },
+ "warnings": [
+  "6 parameter combinations were tested; the best train sharpe is inflated by selection (multiple testing).",
+  "Median train sharpe is -0.97: the idea fails for most parameter values, so the top results may be luck.",
+  "No retested candidate beat buy-and-hold on validation sharpe (7.16)."
+ ],
+ "timing": {
+  "backend": "evaluate_candidates",
+  "train_seconds": 0.05,
+  "validation_seconds": 0.01,
+  "ms_per_train_candidate": 8.0
+ },
+ "sweep_csv": "results/experiments/fixture-run/sweeps/20260101-000000-fixture_train.csv",
+ "run_id": "fixture-run",
+ "iteration": 0,
+ "llm": {
+  "context": "No experiments have been run yet.",
+  "seed": 42,
+  "attempts": [
+   {
+    "attempt": 0,
+    "response": "{...}",
+    "error": null,
+    "code": null
+   }
+  ]
+ },
+ "error": null,
+ "notes": "",
+ "schema_version": 1,
+ "future_field": "ignored by older loaders"
+}

@@ -1,0 +1,19 @@
+{
+  "hypothesis": "Multi-day momentum persists when hourly volatility is low.",
+  "rationale": "Calm trends attract gradual flows, while noisy regimes tend to reverse.",
+  "strategy": {
+    "name": "momentum_low_volatility",
+    "conditions": [
+      {"id": "momentum", "feature": "momentum", "field": "close", "lookback": 72, "operator": ">", "threshold": 0.01},
+      {"id": "volatility", "feature": "volatility", "field": "close", "lookback": 48, "operator": "<", "threshold": 0.008}
+    ],
+    "logic": "AND",
+    "true_position": 1,
+    "false_position": 0
+  },
+  "parameter_space": {
+    "momentum.lookback": [48, 72, 120, 168],
+    "momentum.threshold": [0.005, 0.01, 0.02],
+    "volatility.threshold": [0.005, 0.008, 0.012]
+  }
+}

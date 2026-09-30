@@ -77,7 +77,7 @@ def test_example_configs_are_valid(path: Path) -> None:
         (("conditions", 0, "field"), "vwap", INVALID_SPEC),
         (("conditions", 1, "id"), "momentum", INVALID_SPEC),  # duplicate id
         (("conditions", 0, "code"), "import os", INVALID_SPEC),  # unknown key
-        (("conditions",), [], INVALID_SPEC),
+        (("conditions",), "momentum > 0", INVALID_SPEC),
     ],
 )
 def test_invalid_specs_are_rejected_with_code(path: tuple, value: object, code: str) -> None:
@@ -123,3 +123,15 @@ def test_research_proposal_matches_future_llm_output() -> None:
         ResearchProposal.from_dict({"hypothesis": "h", "strategy": SPEC, "parameter_space": {"rsi.lookback": [5]}})
     with pytest.raises(SpecError):
         ResearchProposal.from_dict({"hypothesis": "h", "strategy": SPEC, "parameter_space": {"vol.lookback": [1, 12]}})
+
+
+def test_unconditional_spec_is_valid_for_benchmarks() -> None:
+    spec = StrategySpec.from_dict({"name": "buy_and_hold", "conditions": [], "true_position": 1})
+    assert spec.conditions == () and spec.describe() == "always long"
+    assert StrategySpec.from_json(spec.to_json()) == spec
+
+
+def test_describe_is_readable() -> None:
+    assert StrategySpec.from_dict(SPEC).describe() == (
+        "long if momentum(close, 24) > 0.02 AND volatility(close, 12) < 0.03, else flat"
+    )

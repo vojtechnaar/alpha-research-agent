@@ -1,0 +1,232 @@
+"""Proposal parsing, prompts, feedback and the bounded research loop (with a fake LLM)."""
+
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+
+import pytest
+
+from src.agents import prompts
+from src.agents.proposals import extract_json, parse_proposal
+from src.agents.research import LoopSettings, ReplayGenerator, main, run_research
+from src.research.benchmarks import load_benchmarks
+from src.research.experiment import ExperimentSettings
+from src.research.records import load_records
+from src.strategies.features import FEATURE_REGISTRY, FeatureDef, compute_momentum
+from src.strategies.schema import (
+    DUPLICATE_PROPOSAL,
+    INVALID_SPEC,
+    MALFORMED_JSON,
+    SEARCH_SPACE_TOO_LARGE,
+    UNSUPPORTED_FEATURE,
+    UNSUPPORTED_OPERATOR,
+    SpecError,
+)
+
+from conftest import make_hourly_data
+
+PROPOSAL = {
+    "hypothesis": "Momentum persists when volatility is low.",
+    "rationale": "Calm trends continue.",
+    "strategy": {
+        "name": "mom_lowvol",
+        "conditions": [
+            {"id": "mom", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0},
+            {"id": "vol", "feature": "volatility", "field": "close", "lookback": 24, "operator": "<", "threshold": 0.02},
+        ],
+    },
+    "parameter_space": {"mom.lookback": [6, 24, 72], "mom.threshold": [0.0, 0.01]},
+}
+
+
+def proposal(**changes: object) -> dict:
+    p = copy.deepcopy(PROPOSAL)
+    p.update(changes)
+    return p
+
+
+def variant(lookbacks: list[int]) -> str:
+    return json.dumps(proposal(hypothesis=f"Momentum over {lookbacks}.", parameter_space={"mom.lookback": lookbacks}))
+
+
+class FakeGenerator:
+    """Scripted replies; records every conversation and seed it was given."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = list(replies)
+        self.calls: list[list[dict[str, str]]] = []
+        self.seeds: list[int | None] = []
+
+    def generate(self, messages, n=1, seed=None):
+        self.calls.append(copy.deepcopy(messages))
+        self.seeds.append(seed)
+        return [self.replies.pop(0) if self.replies else "no json here"]
+
+
+def run(generator, settings, tmp_path, **loop_kwargs):
+    loop = LoopSettings(**{"hypotheses": 3, **loop_kwargs})
+    return run_research(generator, make_hourly_data(), settings, loop, tmp_path, load_benchmarks(), "SYN/USD",
+                        log=lambda _: None)
+
+
+# ---------------------------------------------------------------- parsing and validation
+
+
+def test_parse_proposal_tolerates_wrapping() -> None:
+    text = "<think>{draft}</think>\nHere it is:\n```json\n" + json.dumps(PROPOSAL) + "\n```"
+    parsed = parse_proposal(text, max_candidates=100)
+    assert parsed.hypothesis == PROPOSAL["hypothesis"]
+    assert parsed.parameter_space == PROPOSAL["parameter_space"]
+
+
+@pytest.mark.parametrize(
+    "text, code",
+    [
+        ("Momentum is a great idea.", MALFORMED_JSON),
+        ('{"hypothesis": "cut off", "strategy": {"name": ', MALFORMED_JSON),
+        ("{'hypothesis': 'single quotes'}", MALFORMED_JSON),
+        ("[1, 2, 3]", MALFORMED_JSON),
+        (json.dumps(proposal(strategy={**PROPOSAL["strategy"], "conditions": [
+            {"feature": "rsi", "field": "close", "lookback": 14, "operator": ">", "threshold": 70}]})), UNSUPPORTED_FEATURE),
+        (json.dumps(proposal(strategy={**PROPOSAL["strategy"], "logic": "XOR"})), UNSUPPORTED_OPERATOR),
+        (json.dumps(proposal(parameter_space={"mom.window": [5]})), INVALID_SPEC),
+        (json.dumps(proposal(parameter_space={"vol.lookback": [1, 24]})), INVALID_SPEC),
+        (json.dumps(proposal(parameter_space={"mom.lookback": list(range(1, 11)), "mom.threshold": [0.0] * 11})),
+         SEARCH_SPACE_TOO_LARGE),
+        (json.dumps(proposal(strategy={"name": "bh", "conditions": [], "true_position": 1})), INVALID_SPEC),
+        (json.dumps(proposal(code="import os; os.system('rm -rf /')")), INVALID_SPEC),
+    ],
+)
+def test_invalid_proposals_are_rejected_with_codes(text: str, code: str) -> None:
+    with pytest.raises(SpecError) as info:
+        parse_proposal(text, max_candidates=100)
+    assert info.value.code == code
+
+
+def test_duplicate_proposals_are_rejected() -> None:
+    first = parse_proposal(json.dumps(PROPOSAL), 100)
+    renamed = proposal(hypothesis="Same thing, new words.", strategy={**PROPOSAL["strategy"], "name": "other"})
+    with pytest.raises(SpecError) as info:
+        parse_proposal(json.dumps(renamed), 100, seen={first.key()})
+    assert info.value.code == DUPLICATE_PROPOSAL
+
+
+def test_extract_json_reports_truncation() -> None:
+    with pytest.raises(SpecError, match="ends before"):
+        extract_json('{"hypothesis": "x"')
+
+
+# ---------------------------------------------------------------- prompts and feedback
+
+
+def test_system_prompt_is_generated_from_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(FEATURE_REGISTRY, "test_feature", FeatureDef(compute_momentum, description="added in a test"))
+    text = prompts.system_prompt(max_candidates=321, transaction_cost=0.001)
+    for name in FEATURE_REGISTRY:
+        assert name in text
+    for op in (">", ">=", "<", "<=", "AND", "OR"):
+        assert op in text
+    assert "321" in text and "JSON only" in text and "No Python, no CUDA" in text
+    json.loads(json.dumps(prompts.EXAMPLE_PROPOSAL))
+    parse_proposal(json.dumps(prompts.EXAMPLE_PROPOSAL), 321)  # the example itself must be valid
+
+
+def test_feedback_is_compact_and_complete(settings: ExperimentSettings, tmp_path: Path) -> None:
+    records = run(FakeGenerator([json.dumps(PROPOSAL)]), settings, tmp_path, hypotheses=1)
+    text = prompts.feedback_message(records)
+    for section in ("PREVIOUS HYPOTHESES", "HYPOTHESIS:", "STRATEGY:", "TRAIN (", "VALIDATION (", "GENERALIZATION",
+                    "BENCHMARKS (validation", "PARAMETER SENSITIVITY", "mom.lookback", "ROBUSTNESS WARNINGS"):
+        assert section in text
+    assert len(text) < 4000  # a few hundred tokens, never the CSV or price history
+
+    blind = prompts.feedback_message(records, include_validation=False)
+    assert "VALIDATION" not in blind and "BENCHMARKS (train" in blind
+
+
+# ---------------------------------------------------------------- the loop
+
+
+def test_loop_stops_after_n_hypotheses(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator([variant([6, 24]), variant([24, 72]), variant([72, 168]), variant([168, 336])])
+    records = run(generator, settings, tmp_path, hypotheses=3)
+    assert len(records) == 3 and len(generator.calls) == 3
+    assert [r.status for r in records] == ["completed"] * 3
+    assert len(load_records(tmp_path / "experiments.jsonl")) == 3
+    assert all(Path(r.sweep_csv).exists() for r in records)
+    assert generator.seeds == [42, 1042, 2042]
+
+
+def test_feedback_reaches_the_next_iteration(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator([variant([6, 24]), variant([24, 72])])
+    run(generator, settings, tmp_path, hypotheses=2)
+    first_context, second_context = generator.calls[0][-1]["content"], generator.calls[1][-1]["content"]
+    assert "No experiments" in first_context
+    assert "Momentum over [6, 24]." in second_context and "TRAIN (" in second_context
+
+
+def test_invalid_reply_is_repaired_within_retry_limit(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator(['{"hypothesis": "x", "strategy": {"name": "x", "conditions": [{"feature": "rsi"}]}}',
+                               json.dumps(PROPOSAL)])
+    (record,) = run(generator, settings, tmp_path, hypotheses=1)
+    assert record.status == "completed" and len(generator.calls) == 2
+    repair = generator.calls[1][-1]["content"]
+    assert "rejected by the validator" in repair and "INVALID_SPEC" in repair
+    assert [a["code"] for a in record.llm["attempts"]] == ["INVALID_SPEC", None]
+
+
+def test_retry_limit_and_early_stop_on_repeated_rejections(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator([])  # never returns JSON
+    records = run(generator, settings, tmp_path, hypotheses=5, max_proposal_retries=2, max_consecutive_rejections=2)
+    assert [r.status for r in records] == ["rejected", "rejected"]  # stopped early, never 5
+    assert len(generator.calls) == 2 * 3  # 1 + 2 retries per hypothesis
+    assert records[0].error.startswith(MALFORMED_JSON)
+
+
+def test_duplicate_proposal_triggers_a_repair(settings: ExperimentSettings, tmp_path: Path) -> None:
+    generator = FakeGenerator([variant([6, 24]), variant([6, 24]), variant([24, 72])])
+    records = run(generator, settings, tmp_path, hypotheses=2)
+    assert [r.status for r in records] == ["completed", "completed"]
+    assert records[1].llm["attempts"][0]["code"] == DUPLICATE_PROPOSAL
+
+
+def test_evaluation_errors_are_recorded_not_fatal(settings: ExperimentSettings, tmp_path: Path) -> None:
+    def broken(*args, **kwargs):
+        raise RuntimeError("backend exploded")
+
+    loop = LoopSettings(hypotheses=2)
+    records = run_research(FakeGenerator([variant([6, 24]), variant([24, 72])]), make_hourly_data(), settings,
+                           loop, tmp_path, evaluator=broken, log=lambda _: None)
+    assert [r.status for r in records] == ["failed", "failed"]
+    assert "backend exploded" in records[0].error
+
+
+def test_loop_settings_have_hard_limits() -> None:
+    for bad in (0, 101):
+        with pytest.raises(ValueError):
+            LoopSettings(hypotheses=bad)
+
+
+def test_cli_replay_runs_without_llm(tmp_path: Path) -> None:
+    data_path = tmp_path / "syn.parquet"
+    make_hourly_data().to_parquet(data_path)
+    replay = tmp_path / "proposals.jsonl"
+    replay.write_text(variant([6, 24]) + "\n")
+    code = main(["--data", str(data_path), "--hypotheses", "1", "--replay", str(replay), "--output-dir", str(tmp_path / "out"),
+                 "--train-start", "2020-01-01", "--train-end", "2020-03-15", "--validation-start", "2020-03-15",
+                 "--validation-end", "2020-05-01", "--min-train-trades", "1", "--transaction-cost", "0.002"])
+    assert code == 0
+    (run_dir,) = (tmp_path / "out").iterdir()
+    run_info = json.loads((run_dir / "run.json").read_text())
+    assert run_info["settings"]["transaction_cost"] == 0.002 and run_info["settings"]["cost_bps"] == 20
+    (record,) = load_records(run_dir / "experiments.jsonl")
+    assert record.status == "completed" and record.cost_bps == 20
+    assert ReplayGenerator(replay).generate([])[0] == variant([6, 24])
+
+
+def test_feedback_is_identical_for_fresh_and_reloaded_records(settings: ExperimentSettings, tmp_path: Path) -> None:
+    records = run(FakeGenerator([json.dumps(PROPOSAL)]), settings, tmp_path, hypotheses=1)
+    reloaded = load_records(tmp_path / "experiments.jsonl")
+    assert prompts.feedback_message(records) == prompts.feedback_message(reloaded)
+    assert "flat n/a" in prompts.feedback_message(records)  # undefined Sharpe shown as n/a, not nan

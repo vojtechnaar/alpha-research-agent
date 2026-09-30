@@ -1,0 +1,6 @@
+{
+  "name": "flat",
+  "description": "Always in cash (no conditions): zero return, zero risk, undefined Sharpe.",
+  "conditions": [],
+  "true_position": 0
+}

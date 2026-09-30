@@ -58,8 +58,13 @@ def evaluate_conditions(data: pd.DataFrame, spec: StrategySpec, cache: FeatureCa
 
 
 def generate_positions(data: pd.DataFrame, spec: StrategySpec, cache: FeatureCache | None = None) -> pd.Series:
-    """Target position per bar (-1/0/+1), decided at that bar's close. Undefined conditions -> flat."""
+    """Target position per bar (-1/0/+1), decided at that bar's close. Undefined conditions -> flat.
+
+    A spec without conditions is unconditional (always `true_position`): buy-and-hold, cash.
+    """
     validate_strategy(spec)
+    if not spec.conditions:
+        return pd.Series(float(spec.true_position), index=data.index, name="position")
     combined = LOGIC_REGISTRY[spec.logic](evaluate_conditions(data, spec, cache))
     positions = np.where(combined == 1.0, spec.true_position, spec.false_position).astype("float64")
     return pd.Series(np.where(combined.isna(), 0.0, positions), index=data.index, name="position")

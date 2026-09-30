@@ -1,134 +1,209 @@
 # Architecture
 
-The goal is an automated quantitative research system. **Qwen3-8B acts as the researcher**: it proposes hypotheses and the parameter space to test. **A numerical engine is the experiment engine**: it runs the backtests, first in Python and later in CUDA. A compact summary of the results goes back to the LLM, which proposes the next hypothesis.
+The goal is an automated quantitative research system:
+- **Qwen3-8B is the researcher.** It decides *what* to test: a hypothesis, a strategy and a parameter space.
+- **A numerical engine is the experiment engine.** It runs the parameter search and backtests. It's Python now, with C++/CUDA later.
+- **Only a compact summary goes back to the LLM,** which then proposes the next hypothesis.
 
 ```
-Market data (CCXT → Parquet)                              src/data/            NOW
+Market data (CCXT → Parquet)                                   src/data/                  NOW
         ↓
-Qwen3-8B  (+ LoRA later)                                  src/models/llm.py    inference only
+Qwen3-8B (one selected GPU)  (+ LoRA later)                    src/models/llm.py          NOW (LoRA: FUTURE)
         ↓
-Hypothesis + StrategySpec + parameter space (JSON)        ResearchProposal     schema NOW, LLM later
+ResearchProposal JSON: hypothesis + StrategySpec + parameter space   src/agents/proposals.py    NOW
         ↓
-Validation against trusted registries                     schema.py            NOW
+Validation against the trusted registries (rejections → repair)      src/strategies/schema.py   NOW
         ↓
-Feature / operator registry                               features.py, operators.py   NOW
+Parameter sweep (Cartesian product, candidate budget)           src/strategies/sweep.py    NOW
         ↓
-Parameter sweep (Cartesian product)                       sweep.py             NOW
+Candidate evaluator backend:  Python (NOW) → C++ CPU → CUDA (FUTURE)
         ↓
-Evaluator:  Python (NOW) → C++ CPU (FUTURE) → CUDA (FUTURE)
+TRAIN backtests (all candidates) → top N by train metric → frozen
         ↓
-Backtest (1-bar execution lag, costs)                     src/backtest/        NOW
+VALIDATION backtests (the frozen top N only)                    src/research/experiment.py NOW
         ↓
-Metrics → robustness metrics (splits, stability, significance)   partly NOW
+Benchmarks on the same periods (buy-and-hold, cash, naive momentum)  src/research/benchmarks.py NOW
         ↓
-Compact experiment summary                                summarize_sweep()    first version NOW
+Summaries + robustness warnings                                 src/research/summary.py    NOW
         ↓
-Qwen feedback → next hypothesis                           FUTURE (bounded loop)
+Experiment record (JSONL)                                       src/research/records.py    NOW
+        ↓
+Compact feedback (~500 tokens) → Qwen → next hypothesis         src/agents/prompts.py      NOW
+        ↑_________________ bounded loop: src/agents/research.py (--hypotheses N) _______|
 ```
 
-## What exists now
+## Components
 
 | Component | Path | Role |
 |---|---|---|
-| Data | `src/data/download.py` | Hourly OHLCV from Bitstamp to `data/raw/*.parquet` |
-| Spec | `src/strategies/schema.py` | `StrategySpec`, `Condition`, `ResearchProposal`, validation, error codes |
-| Features | `src/strategies/features.py` | `FEATURE_REGISTRY` of parameterised, causal features |
-| Operators | `src/strategies/operators.py` | `OPERATOR_REGISTRY` (`> >= < <=`) and `LOGIC_REGISTRY` (`AND`, `OR`) |
-| Evaluator | `src/strategies/evaluator.py` | spec → features → conditions → positions → backtest → metrics |
-| Sweeps | `src/strategies/sweep.py` | base spec + parameter space → candidate specs → results table + summary |
-| CLI | `src/strategies/run.py` | Run one spec or one sweep on a Parquet file |
-| Backtest | `src/backtest/engine.py`, `metrics.py` | Execution lag, costs, returns; asset-agnostic metrics |
-| LLM | `src/models/llm.py` | Qwen3-8B on one chosen GPU; not connected to the engine yet |
+| Data | `src/data/download.py` | Hourly OHLCV from Bitstamp → `data/raw/*.parquet` |
+| Spec | `src/strategies/schema.py` | `StrategySpec`, `ResearchProposal`, validation, rejection codes |
+| Primitives | `src/strategies/features.py`, `operators.py` | Trusted feature, operator and logic registries |
+| Evaluation | `src/strategies/evaluator.py`, `sweep.py` | Spec → positions → backtest; candidate generation; `evaluate_candidates` backend |
+| Backtest | `src/backtest/` | Execution lag, costs, asset-agnostic metrics |
+| Experiments | `src/research/experiment.py` | Train sweep → top N → validation retest |
+| Benchmarks | `src/research/benchmarks.py`, `configs/benchmarks/` | Buy-and-hold, flat (cash), naive 24h momentum |
+| Summaries | `src/research/summary.py` | Distributions, parameter sensitivity, degradation, warnings |
+| Records | `src/research/records.py`, `report.py` | JSONL experiment records and readable reports |
+| LLM | `src/models/llm.py` | Qwen3-8B on one explicitly chosen GPU |
+| Agent | `src/agents/prompts.py`, `proposals.py`, `research.py` | Prompts from registries, parsing, bounded loop |
 
-## Design decisions
+## The research loop
 
-### Generated code is never executed
-
-The LLM only ever produces JSON. That JSON is validated against fixed registries of features and operators that humans wrote and tested. Anything outside the registries is rejected with a machine-readable code (`UNSUPPORTED_FEATURE`, `UNSUPPORTED_OPERATOR`, `INVALID_SPEC`), and that code becomes feedback for the LLM. There is no `eval`, no `exec`, and no generated Python or CUDA.
-
-This gives three things:
-- **Safety:** nothing the model writes can touch the machine.
-- **Correctness:** every primitive has unit tests, including a no-look-ahead test.
-- **Portability:** the same small registry can be implemented in C++ and CUDA, and checked against Python.
-
-Letting the LLM propose new operators is a possible later step. Those would go to human review before being added to the registry.
-
-### Parameter search is separate from LLM generation
-
-Qwen3-8B generates about 10 tokens per second on DeepDish, so one LLM call costs seconds. One backtest costs milliseconds in Python, and will cost far less in CUDA. The LLM is therefore used once per hypothesis, to say what to test and over which ranges:
-
-```json
-{"hypothesis": "Momentum may be stronger in low-volatility regimes.",
- "strategy": { ...StrategySpec... },
- "parameter_space": {"momentum.lookback": [6, 12, 24, 48], "momentum.threshold": [0.005, 0.01, 0.02]},
- "rationale": "..."}
+```bash
+python -m src.agents.research --data data/raw/bitstamp_BTC-USD_1h.parquet --hypotheses 5 --device cuda:0
 ```
 
-The engine generates the Cartesian product itself and evaluates every candidate. Only a compact summary goes back to the LLM:
-- the distribution of the metric
-- the best candidates
-- the mean metric for each value of each parameter
+`--hypotheses 5` means **at most five research iterations**, which is five LLM proposals. It does not mean five backtests. Each iteration can backtest up to `--max-candidates` parameter combinations (default 1,000). One iteration runs these steps:
 
-So one hypothesis becomes hundreds or thousands of backtests but only one LLM call. `ResearchProposal` already parses and validates this format, including checking that every value in the parameter space produces a valid strategy.
+1. **Build the context.** On the first iteration it's "no experiments yet". After that it's the compact feedback: one line per earlier hypothesis, plus details of the most recent `--recent` experiments.
+2. **Ask Qwen for one proposal:** JSON with `hypothesis`, `rationale`, `strategy` and `parameter_space`.
+3. **Parse and validate it before anything runs.** Validation checks the JSON syntax, the features and operators against the registries, every parameter value, the size of the search (`SEARCH_SPACE_TOO_LARGE`), and duplicates of experiments already run (`DUPLICATE_PROPOSAL`).
+4. **Repair invalid replies (bounded).** The validator's error is shown to Qwen with a request to fix only the JSON. That's at most `--max-proposal-retries` extra calls (default 2), so at most 3 LLM calls per iteration.
+5. **Generate the Cartesian product** of the parameter space and enforce the candidate budget.
+6. **Train sweep:** backtest every candidate on TRAIN.
+7. **Select the top N** (`--top`) by the selection metric (default Sharpe), using train results only. Candidates with fewer than `--min-train-trades` trades aren't eligible.
+8. **Freeze** the selected parameters.
+9. **Validation retest:** backtest only those frozen candidates on VALIDATION.
+10. **Benchmarks:** evaluate buy-and-hold, cash and naive momentum on both periods, with the same costs and backend.
+11. **Summarise:** train distribution, validation results, train → validation degradation, parameter sensitivity and warnings.
+12. **Save** the experiment record, plus the train table as a separate CSV.
+13. **Feed the compact summary** into the next iteration.
 
-### Correctness first, then CUDA
+**Stopping rules:**
+- The loop is a `for` over `range(hypotheses)`, capped at 100. There is no other loop.
+- A proposal still invalid after its retries is recorded as `rejected`, and that iteration is used up.
+- After `--max-consecutive-rejections` rejected iterations in a row (default 3), the run stops early. A model that keeps breaking the format is wasting GPU time.
+- An evaluation error is recorded as `failed` and the loop continues.
 
-CUDA is there to make large searches over parameters, strategies, assets and periods fast. It isn't there for its own sake, and a fast wrong answer is worthless. So the order is:
+So the worst-case LLM cost of a run is `hypotheses × (1 + max_proposal_retries)` calls.
 
-1. **Python reference (now).** Readable pandas and numpy, with unit tests.
-2. **C++ CPU implementation.** Same registry, same parameters. A parity test requires its metrics to match Python on the same sweep.
-3. **CUDA implementation.** Same parity test.
-4. **Benchmark** on identical sweeps: Python vs C++ vs CUDA, measured in candidates per second.
+## Train, validation and final test
 
-`run_sweep` is the interface all three implement. The inputs are data, a base spec, a parameter space, costs and a period. The output is one row per candidate with the same columns. That makes the benchmark a matter of swapping the implementation behind this one function.
+| Split | Default | Used for |
+|---|---|---|
+| TRAIN | 2017-01-01 → 2023-01-01 | The parameter search. All candidates are ranked here. |
+| VALIDATION | 2023-01-01 → 2025-01-01 | Retesting the frozen top N. **Never used to select parameters.** |
+| FINAL TEST | 2025-01-01 → now | Nothing yet. Reserved for a final, untouched evaluation. |
 
-### Out-of-sample evaluation will decide what counts as a discovery
+- **The final test is enforced in code.** `run_experiment` drops every bar at or after the validation end before doing anything, so no experiment can see final-test data.
+- **Features stay causal.** They're computed over the history up to each bar, so indicators are warmed up at the start of each split without using later data.
 
-A system that tests thousands of variants will always find some that look excellent in-sample purely by chance. The results design keeps rigorous evaluation cheap to add:
-- **Periods:** `evaluate_strategy` and `run_sweep` take `start`/`end`. Features are computed on the full history, so indicators are warmed up at the start of a period, but returns only count inside it. Train/test splits and walk-forward windows are just repeated calls with different periods.
-- **Long-format results:** `run_sweep` returns one row per candidate with `dataset`, `start` and `end` columns. More assets, periods or cost levels are just more rows added with `pd.concat`. Parameter stability, cost sensitivity, regime breakdowns and multiple-testing corrections are then group-bys over that table.
-- **Bar-level returns:** `StrategyResult.backtest` keeps the returns for every bar. That's what bootstrap tests and information-coefficient calculations need.
+**Important: validation doesn't stay out-of-sample forever.** Within one experiment, validation is unseen. The parameters are frozen before it's evaluated. But the loop shows validation results to Qwen, and Qwen's next hypothesis is shaped by them. Over many iterations the *choice of ideas* adapts to the validation period, so validation gradually becomes training information, just as it would for a human researcher who keeps checking the same holdout. The mitigations:
 
-Planned next: fixed train/validation/test splits, walk-forward evaluation, a deflated Sharpe ratio or a similar multiple-testing correction, bootstrap confidence intervals, and cost sensitivity.
+- **Blind validation:** `--no-validation-feedback` shows Qwen train results only. Validation is still computed and recorded, but it no longer guides the search.
+- **An untouched final test period:** used only once the research is finished. Treat it as spent after you look at it.
+- **Future options:** walk-forward evaluation (rolling train/validation windows), cross-asset validation (discover on BTC, confirm on ETH), and a fresh final-test period when new data arrives.
 
-### Loops always have explicit limits
+## Benchmarks
 
-The future loop (`python -m src.agents.research`) will be bounded by configuration, for example:
+`configs/benchmarks/*.json` are ordinary StrategySpecs:
+- **`buy_and_hold`** and **`flat`** have no conditions, so they're always long or always in cash.
+- **`naive_momentum_24h`** is the simplest trend rule.
 
-```yaml
-num_hypotheses: 10                    # LLM research hypotheses, NOT backtests
-max_candidates_per_hypothesis: 1000   # enforced by generate_candidates(max_candidates=...)
-max_llm_tokens: 150
-random_seed: 42
+They run through the same evaluator, costs and periods as the candidates, and a test checks that their periods match exactly.
+
+A candidate beating buy-and-hold's Sharpe is **not** a conclusion that it has alpha. After many trials the best result is inflated by selection, and the report says so explicitly.
+
+## Experiment records
+
+Records are stored per run:
+
+```
+results/experiments/<run_id>/run.json             settings, loop limits, model + generation settings, seed,
+                                                  git commit, data path, benchmarks, system prompt
+results/experiments/<run_id>/experiments.jsonl    one record per iteration (completed / rejected / failed)
+results/experiments/<run_id>/sweeps/*.csv         full train table per experiment (referenced by path)
+results/experiments/manual/                       records from `python -m src.strategies.run ... --validation-start`
 ```
 
-Each run stops after `num_hypotheses` LLM calls. It can also stop earlier on a stopping criterion, such as no improvement in out-of-sample results for K hypotheses. There is never an open-ended loop. The candidate limit already exists: `generate_candidates` refuses a parameter space larger than `max_candidates` rather than silently truncating it.
+A record holds the following, and never any time series (a typical record is a few KB):
+- ids and the timestamp
+- dataset and data path
+- the train and validation periods
+- the transaction cost, as a fraction and in bps
+- the selection metric, top N, candidate budget and minimum trades
+- the hypothesis and rationale
+- the StrategySpec and its readable description
+- the parameter space and number of candidates
+- the train summary (quantiles, share positive, best candidates)
+- the validation summary (median, best, worst, degradation)
+- the top-N comparison rows
+- the benchmarks for both periods
+- the parameter sensitivity
+- the warnings and timing
+- the LLM context and every raw attempt, with error code, seed and token statistics
 
-Each iteration will look like this:
-1. The LLM returns a `ResearchProposal`. If it's invalid, the error code is fed back, and that still counts against `num_hypotheses`.
-2. `run_sweep` runs on the train period.
-3. `summarize_sweep` produces the summary for the LLM.
-4. The best candidates are checked on validation and logged. The validation results are never shown to the LLM.
-5. The test period is used only for the final report.
+`results/` is git-ignored. A small schema fixture lives in `tests/fixtures/`. Print any run with `python -m src.research.report <experiments.jsonl>`.
 
-### LoRA comes later, trained on research behaviour, not just winners
+## Reproducibility
 
-LoRA fine-tuning needs data that only a working research system produces. Each logged research step will become a training record:
+- **`run.json` stores everything needed to repeat a run:** the command line, git commit, settings, generation settings and the full system prompt.
+- **Seeds:** each LLM call is seeded (`--seed`, default 42, offset by iteration and attempt). `--temperature 0` switches to greedy decoding. GPU inference is still not bit-exact, so identical text across runs isn't guaranteed.
+- **Replay:** `--replay proposals.json` feeds saved proposals through the full pipeline without the LLM. Given the same data and code, it reproduces the numerical results exactly. It's also the quickest check that the pipeline works on the server.
 
-- **Input:** the available features and operators, the market and research context, summaries of previous experiments, and the hypotheses already tested.
-- **Target:** the next hypothesis, the StrategySpec, the parameter space and the rationale.
-- **Result metadata:** out-of-sample Sharpe, drawdown, turnover, robustness and parameter stability, an ACCEPT or REJECT verdict, and an explanation.
+## Why these design choices
 
-The dataset will contain both good and bad research steps, labelled. Training only on historical winners would teach the model to memorise lucky strategies, not how to do research.
+- **Generated code is never executed.** Qwen produces JSON only, and it's validated against registries that humans wrote and tested. Unsupported requests are rejected with `UNSUPPORTED_FEATURE`, `UNSUPPORTED_OPERATOR`, `INVALID_SPEC`, `MALFORMED_JSON`, `SEARCH_SPACE_TOO_LARGE` or `DUPLICATE_PROPOSAL`, and the code goes back to Qwen as feedback. There is no `eval` or `exec`. New primitives go through human review.
+- **The LLM decides; the engine explores.** Qwen generates about 10 tokens per second on DeepDish, so one proposal (about 250 tokens of JSON) costs about 25 s. One Python backtest costs about 25 ms. So each hypothesis gets one LLM call and hundreds of backtests, and Qwen reads a summary of about 500 tokens, never CSVs or prices.
+- **`--max-new-tokens` defaults to 320.** A two-condition proposal with its parameter space is roughly 200–280 tokens. A limit of 200 would regularly cut the JSON off, which forces a retry and costs more than it saves.
+- **Correctness first, then CUDA.** Everything above the backend depends only on the `evaluate_candidates` contract (`CandidateEvaluator` in `sweep.py`): data, candidates, costs and a period in; one metrics row per candidate out. A C++ or CUDA backend can be passed as `evaluator=` without changing the StrategySpec, the LLM, the records, the validation logic or the reporting. Every record includes `timing.backend` and `ms_per_train_candidate`, which the Python vs C++ vs CUDA benchmark will use.
+- **The loop has explicit limits.** See the stopping rules above.
 
-The evaluation compares **base Qwen3-8B** against **Qwen3-8B + quant LoRA** on the same tasks with the same compute budget. Measures:
-- rate of valid StrategySpecs
+**Python baseline** (the reference for the future speed-up), measured on DeepDish in September 2026 on BTC/USD hourly bars from 2017-01-01 to 2023-01-01 (about 52,000 bars): a 300-candidate sweep took 7.5 s, about 25 ms per candidate on one CPU core with pandas.
+
+## Avoiding false discoveries
+
+Implemented now. These are descriptive, not formal tests:
+- number of candidates tested
+- the train metric distribution (min, p10, p25, median, p75, p90, max) and share positive
+- the top candidates
+- parameter sensitivity (mean metric per parameter value)
+- validation results of the frozen top N and their train → validation change
+- benchmarks on both periods
+- warnings:
+  - multiple testing
+  - median train Sharpe ≤ 0
+  - best value at the edge of the grid
+  - top candidates with identical results (a parameter with no effect)
+  - weak or negative validation
+  - too few validation trades
+  - buy-and-hold comparison
+
+**Future work, to be implemented carefully rather than approximated:**
+- **Probabilistic Sharpe Ratio** and **Deflated Sharpe Ratio.** The DSR needs the number of *effective* independent trials and the variance of Sharpe across trials. The candidates here are highly correlated, so the raw candidate count would over-deflate.
+- **Bootstrap confidence intervals** that respect autocorrelation (block bootstrap), using the per-bar returns the engine already produces.
+- **Multiple-testing corrections** across the whole research history, not just one sweep.
+- **Walk-forward** analysis and **cross-asset** validation.
+- **Cost sensitivity** (re-running the frozen top N at several cost levels) and **regime breakdowns**.
+
+## LoRA: later, and trained on research behaviour
+
+LoRA isn't implemented yet. The experiment records are designed to become its training data:
+- **Input:** the context the model saw (`llm.context`, together with the run's `system_prompt`), meaning the available primitives, earlier hypotheses and experiment summaries.
+- **Target:** the proposal it produced (hypothesis, StrategySpec, parameter space, rationale).
+- **Labels and metadata:** validation results, benchmark comparison, robustness warnings, degradation, rejection codes.
+
+Examples won't be labelled "good" just for a high in-sample Sharpe. Label quality will come from validation and final-test behaviour, parameter stability and the warnings. Bad and rejected proposals stay in the data, so the model can learn what not to do.
+
+The planned experiment compares **base Qwen3-8B** against **Qwen3-8B + quant LoRA** on identical research tasks with the same budget. Measures:
+- valid-proposal rate
 - rate of unsupported features or operators
+- retries needed
 - hypothesis diversity
-- out-of-sample performance and robustness of what each finds
+- validation and final-test performance
 - parameter stability
-- number of useful hypotheses per compute budget
+- useful hypotheses per GPU-hour
 
-### GPU usage
+## GPU usage
 
-DeepDish4 has several shared RTX A6000s. Qwen3-8B in bf16 (about 16 GB) fits on one card, so `QwenGenerator` puts the whole model on one explicitly chosen device. The default is `cuda:0`; override it with `QWEN_DEVICE=cuda:2` or `CUDA_VISIBLE_DEVICES`. Nothing assumes a particular number of GPUs. The CUDA backtester can later run on a different GPU, or in sequence with the LLM, depending on what's free.
+DeepDish4 has several shared RTX A6000s, and Qwen3-8B (bf16, about 16 GB) fits on one. `QwenGenerator` puts the whole model on a single device and never spreads it across GPUs.
+
+To pick a free GPU:
+
+```bash
+nvidia-smi                 # look at Memory-Usage and the Processes table
+python -m src.agents.research ... --device cuda:2      # or: QWEN_DEVICE=cuda:2 python -m ...
+```
+
+Choose a GPU with at least about 20 GB free and no heavy processes. Never kill other users' processes. The numerical backtests run on the CPU for now. A future CUDA backend can use a different GPU, or run after the LLM step.

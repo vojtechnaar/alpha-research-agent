@@ -1,1 +1,1 @@
-"""Future LLM research loop (see docs/architecture.md). Not implemented in this milestone."""
+"""LLM research agent: prompts, proposal parsing and the bounded research loop (research.py)."""

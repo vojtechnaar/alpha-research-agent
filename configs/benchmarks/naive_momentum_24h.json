@@ -1,0 +1,9 @@
+{
+  "name": "naive_momentum_24h",
+  "description": "Long after a positive 24h return, short after a negative one; the simplest trend rule.",
+  "conditions": [
+    {"id": "momentum", "feature": "momentum", "field": "close", "lookback": 24, "operator": ">", "threshold": 0.0}
+  ],
+  "true_position": 1,
+  "false_position": -1
+}

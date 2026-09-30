@@ -86,16 +86,44 @@ class FeatureDef:
     uses_lookback: bool = True
     min_lookback: int = 1
     description: str = ""
+    threshold_hint: str = ""  # units/typical range, shown to the LLM so thresholds are sensible
 
 
 FEATURE_REGISTRY: dict[str, FeatureDef] = {
-    "returns": FeatureDef(compute_returns, uses_lookback=False, description="one-bar return"),
-    "momentum": FeatureDef(compute_momentum, description="return over lookback bars"),
-    "rolling_mean": FeatureDef(compute_rolling_mean, description="trailing mean"),
-    "rolling_std": FeatureDef(compute_rolling_std, min_lookback=2, description="trailing sample std"),
-    "volatility": FeatureDef(compute_volatility, min_lookback=2, description="std of one-bar returns"),
-    "zscore": FeatureDef(compute_zscore, min_lookback=2, description="(x - trailing mean) / trailing std"),
-    "rolling_min": FeatureDef(compute_rolling_min, description="trailing minimum"),
-    "rolling_max": FeatureDef(compute_rolling_max, description="trailing maximum"),
-    "volume_change": FeatureDef(compute_volume_change, description="x / mean of previous lookback values - 1"),
+    "returns": FeatureDef(
+        compute_returns, uses_lookback=False, description="one-bar return",
+        threshold_hint="fraction; hourly crypto returns are mostly within +/-0.01",
+    ),
+    "momentum": FeatureDef(
+        compute_momentum, description="return over lookback bars",
+        threshold_hint="fraction, e.g. 0.02 = +2% over the lookback",
+    ),
+    "rolling_mean": FeatureDef(
+        compute_rolling_mean, description="trailing mean",
+        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+    ),
+    "rolling_std": FeatureDef(
+        compute_rolling_std, min_lookback=2, description="trailing sample std",
+        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+    ),
+    "volatility": FeatureDef(
+        compute_volatility, min_lookback=2, description="std of one-bar returns",
+        threshold_hint="per-bar std of returns, NOT annualised; hourly crypto is typically 0.003-0.012",
+    ),
+    "zscore": FeatureDef(
+        compute_zscore, min_lookback=2, description="(x - trailing mean) / trailing std",
+        threshold_hint="unitless, typically -3..3",
+    ),
+    "rolling_min": FeatureDef(
+        compute_rolling_min, description="trailing minimum",
+        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+    ),
+    "rolling_max": FeatureDef(
+        compute_rolling_max, description="trailing maximum",
+        threshold_hint="units of the field; fixed thresholds on raw prices rarely generalise",
+    ),
+    "volume_change": FeatureDef(
+        compute_volume_change, description="x / mean of previous lookback values - 1",
+        threshold_hint="fraction vs the recent average, e.g. 0.5 = 50% above it",
+    ),
 }

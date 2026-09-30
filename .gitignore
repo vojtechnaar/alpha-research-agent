@@ -35,7 +35,7 @@ checkpoints/
 # OS
 .DS_Store
 
-# Agent run logs and LoRA datasets (keep the folder)
+# Generated results: sweep CSVs, experiment records, run logs (keep the folder)
 /results/*
 !/results/.gitkeep
 

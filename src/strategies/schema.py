@@ -10,6 +10,9 @@
 
 At each bar the conditions are combined with `logic`; the position is `true_position` when the
 result is true, `false_position` when false, and flat (0) when any feature is still undefined.
+A spec with no conditions is unconditional (always `true_position`); that is how benchmarks such
+as buy-and-hold ({"conditions": [], "true_position": 1}) and cash are expressed. Research
+proposals from the LLM must have at least one condition.
 
 Each condition has an `id` (default: its feature name, must be unique). Sweepable parameters are
 addressed as "<id>.<param>", e.g. "momentum.lookback" or "vol.threshold".
@@ -32,6 +35,11 @@ from src.strategies.operators import LOGIC_REGISTRY, OPERATOR_REGISTRY
 UNSUPPORTED_FEATURE = "UNSUPPORTED_FEATURE"
 UNSUPPORTED_OPERATOR = "UNSUPPORTED_OPERATOR"
 INVALID_SPEC = "INVALID_SPEC"
+MALFORMED_JSON = "MALFORMED_JSON"
+SEARCH_SPACE_TOO_LARGE = "SEARCH_SPACE_TOO_LARGE"
+DUPLICATE_PROPOSAL = "DUPLICATE_PROPOSAL"
+
+POSITION_NAMES = {1: "long", 0: "flat", -1: "short"}
 
 FIELDS = ("open", "high", "low", "close", "volume")
 POSITIONS = (-1, 0, 1)
@@ -64,6 +72,11 @@ class Condition:
         """Identifier used in parameter names and result columns."""
         return self.id or self.feature
 
+    def describe(self) -> str:
+        """Readable form, e.g. 'momentum(close, 24) > 0.02'."""
+        args = self.field if self.lookback is None else f"{self.field}, {self.lookback}"
+        return f"{self.feature}({args}) {self.operator} {self.threshold:g}"
+
 
 @dataclass(frozen=True)
 class StrategySpec:
@@ -87,8 +100,8 @@ class StrategySpec:
         if "name" not in data or "conditions" not in data:
             raise SpecError(INVALID_SPEC, "strategy needs 'name' and 'conditions'")
         conditions = data["conditions"]
-        if not isinstance(conditions, list) or not conditions:
-            raise SpecError(INVALID_SPEC, "'conditions' must be a non-empty list")
+        if not isinstance(conditions, list):
+            raise SpecError(INVALID_SPEC, "'conditions' must be a list")
         spec = cls(
             name=data["name"],
             conditions=tuple(_condition_from_dict(c, i) for i, c in enumerate(conditions)),
@@ -115,6 +128,13 @@ class StrategySpec:
     def to_json(self, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
+    def describe(self) -> str:
+        """Readable rule, e.g. 'long if momentum(close, 24) > 0.02 AND ..., else flat'."""
+        if not self.conditions:
+            return f"always {POSITION_NAMES[self.true_position]}"
+        rule = f" {self.logic} ".join(c.describe() for c in self.conditions)
+        return f"{POSITION_NAMES[self.true_position]} if {rule}, else {POSITION_NAMES[self.false_position]}"
+
     # ---------------------------------------------------------------- parameters
 
     def parameters(self) -> dict[str, int | float | None]:
@@ -136,7 +156,12 @@ class StrategySpec:
 
 @dataclass(frozen=True)
 class ResearchProposal:
-    """Future LLM output: a hypothesis, a base strategy and the parameter space to sweep."""
+    """LLM output: a hypothesis, a base strategy and the parameter space to sweep.
+
+        {"hypothesis": "...", "rationale": "...",
+         "strategy": {<StrategySpec>},
+         "parameter_space": {"momentum.lookback": [24, 48, 72], "momentum.threshold": [0.01, 0.02]}}
+    """
 
     hypothesis: str
     strategy: StrategySpec
@@ -144,20 +169,47 @@ class ResearchProposal:
     rationale: str = ""
 
     @classmethod
-    def from_dict(cls, data: Any) -> ResearchProposal:
+    def from_dict(cls, data: Any, max_candidates: int | None = None) -> ResearchProposal:
+        """Validate everything before anything is evaluated: spec, parameter names, every value,
+        and the size of the search (SEARCH_SPACE_TOO_LARGE above `max_candidates`)."""
         if not isinstance(data, dict):
             raise SpecError(INVALID_SPEC, "proposal must be a JSON object")
         _reject_unknown_keys(data, {"hypothesis", "strategy", "parameter_space", "rationale"}, "proposal")
-        if not isinstance(data.get("hypothesis"), str) or "strategy" not in data:
-            raise SpecError(INVALID_SPEC, "proposal needs a 'hypothesis' string and a 'strategy'")
+        hypothesis = data.get("hypothesis")
+        if not isinstance(hypothesis, str) or not hypothesis.strip() or "strategy" not in data:
+            raise SpecError(INVALID_SPEC, "proposal needs a non-empty 'hypothesis' string and a 'strategy'")
+        if not isinstance(data.get("rationale", ""), str):
+            raise SpecError(INVALID_SPEC, "'rationale' must be a string")
         strategy = StrategySpec.from_dict(data["strategy"])
+        if not strategy.conditions:
+            raise SpecError(INVALID_SPEC, "a research strategy needs at least one condition "
+                                          "(unconditional strategies are benchmarks)")
         space = data.get("parameter_space", {})
         if not isinstance(space, dict) or not all(isinstance(v, list) and v for v in space.values()):
             raise SpecError(INVALID_SPEC, "'parameter_space' must map parameter names to non-empty lists")
+        n_candidates = math.prod(len(v) for v in space.values())
+        if max_candidates is not None and n_candidates > max_candidates:
+            raise SpecError(SEARCH_SPACE_TOO_LARGE,
+                            f"parameter_space has {n_candidates} combinations; the budget is {max_candidates}")
         for name, values in space.items():  # every value must produce a valid strategy
             for value in values:
                 strategy.with_parameters({name: value})
-        return cls(data["hypothesis"], strategy, space, str(data.get("rationale", "")))
+        return cls(hypothesis.strip(), strategy, space, data.get("rationale", "").strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hypothesis": self.hypothesis,
+            "rationale": self.rationale,
+            "strategy": self.strategy.to_dict(),
+            "parameter_space": self.parameter_space,
+        }
+
+    def key(self) -> str:
+        """Identity of the experiment (rules + search space, ignoring names and prose), for duplicates."""
+        strategy = self.strategy.to_dict()
+        strategy.pop("name", None)
+        strategy.pop("description", None)
+        return json.dumps({"strategy": strategy, "space": self.parameter_space}, sort_keys=True)
 
 
 # -------------------------------------------------------------------- validation
@@ -169,8 +221,8 @@ def validate_strategy(spec: StrategySpec) -> StrategySpec:
         raise SpecError(INVALID_SPEC, "'name' must be a non-empty string")
     if not isinstance(spec.description, str):
         raise SpecError(INVALID_SPEC, "'description' must be a string")
-    if not spec.conditions or len(spec.conditions) > MAX_CONDITIONS:
-        raise SpecError(INVALID_SPEC, f"need 1..{MAX_CONDITIONS} conditions")
+    if len(spec.conditions) > MAX_CONDITIONS:
+        raise SpecError(INVALID_SPEC, f"at most {MAX_CONDITIONS} conditions are allowed")
     if not isinstance(spec.logic, str) or spec.logic not in LOGIC_REGISTRY:
         raise SpecError(UNSUPPORTED_OPERATOR, f"logic {spec.logic!r} not in {sorted(LOGIC_REGISTRY)}")
     for name in ("true_position", "false_position"):

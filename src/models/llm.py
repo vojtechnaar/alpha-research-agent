@@ -3,8 +3,12 @@
 Smoke test (on the GPU server):
     python -m src.models.llm "Propose one testable hypothesis for BTC hourly returns."
 
-The whole model goes on `device` (default cuda:0); Qwen3-8B in bf16 (~16 GB) fits on one A6000.
-Pick another GPU with QWEN_DEVICE=cuda:2 or CUDA_VISIBLE_DEVICES.
+The whole model goes on ONE device (default: $QWEN_DEVICE, else cuda:0); Qwen3-8B in bf16
+(~16 GB) fits on one A6000. Check which GPU is free with `nvidia-smi`, then pass device="cuda:2"
+(research CLI: --device cuda:2) or set QWEN_DEVICE=cuda:2. It never spreads across GPUs.
+
+Sampling is seeded per call for approximate reproducibility; GPU kernels are not bit-exact, so
+identical outputs across runs are not guaranteed. temperature=0 uses greedy decoding.
 """
 
 from __future__ import annotations
@@ -53,25 +57,37 @@ class QwenGenerator:
     ) -> None:
         require_cuda()
         start = time.perf_counter()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         device = device or os.environ.get("QWEN_DEVICE", "cuda:0")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, device_map={"": device})
         self.model.eval()
         self.enable_thinking = enable_thinking
-        self.generation_kwargs = dict(
-            max_new_tokens=max_new_tokens, do_sample=True, temperature=temperature, top_p=top_p, top_k=top_k
-        )
+        sampling = dict(do_sample=True, temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 \
+            else dict(do_sample=False)
+        self.generation_kwargs = dict(max_new_tokens=max_new_tokens, **sampling)
+        self.settings = {"model_id": model_id, "device": device, "enable_thinking": enable_thinking,
+                         **self.generation_kwargs}
+        self.last_stats: dict[str, float] = {}
         print(f"Loaded {model_id} on {device} in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
 
-    def generate(self, messages: list[dict[str, str]], n: int = 1) -> list[str]:
+    def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None) -> list[str]:
         """Sample `n` independent assistant replies to the chat `messages`."""
+        if seed is not None:
+            torch.manual_seed(seed)
         text = self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=self.enable_thinking
         )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
+        start = time.perf_counter()
         with torch.inference_mode():
             output = self.model.generate(**inputs, num_return_sequences=n, **self.generation_kwargs)
+        seconds = time.perf_counter() - start
         prompt_len = inputs["input_ids"].shape[1]
+        pad = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+        new_tokens = int((output[:, prompt_len:] != pad).sum(dim=1).max())
+        self.last_stats = {"prompt_tokens": int(prompt_len), "new_tokens": new_tokens,
+                           "tokens_per_second": round(new_tokens / seconds, 1) if seconds else None,
+                           "hit_max_new_tokens": new_tokens >= self.generation_kwargs["max_new_tokens"]}
         return [self.tokenizer.decode(seq[prompt_len:], skip_special_tokens=True).strip() for seq in output]
 
 

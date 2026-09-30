@@ -1,0 +1,6 @@
+{
+  "name": "buy_and_hold",
+  "description": "Always long (no conditions). Pays one entry cost at the start of each period.",
+  "conditions": [],
+  "true_position": 1
+}
