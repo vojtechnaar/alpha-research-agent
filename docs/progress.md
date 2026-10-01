@@ -92,6 +92,8 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → The loss is computed from outputs for the proposal tokens only (`logits_to_keep`). A test checks it equals the standard loss exactly, and that only the LoRA weights get gradients. The limit is raised to 8,192 tokens, so all examples fit, and the log prints token lengths.
 35. **Training looked stuck for 20 minutes.** Output redirected to a log file is buffered, so nothing showed up until the end, and there was no progress inside an epoch.
     → Line-buffered output plus a line after every step (`epoch 1/3, step 5/51 ... ~38 min left`). The first run (v1, 129 examples) lowered validation loss from 0.419 (base Qwen) to 0.087, 0.075 and 0.071 over 3 epochs (no overfitting yet; epoch 3 kept).
+36. **Base and LoRA runs in parallel could crash each other.** Run ids were the start time to the second, so two runs starting in the same second would collide.
+    → Run ids get a short random suffix. `scripts/compare_lora.sh <gpu> [--adapter ...]` runs the held-out comparison (ETH + GLD, seeds 1–5) on one GPU.
 
 ## Still open
 

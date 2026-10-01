@@ -26,6 +26,7 @@ import random
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -335,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
                                   temperature=args.temperature, top_p=args.top_p, top_k=args.top_k)
 
     system = build_system_prompt(data, settings)
-    run_id = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+    run_id = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"  # parallel runs can start in the same second
     run_dir = args.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "run.json").write_text(json.dumps({
