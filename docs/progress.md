@@ -15,6 +15,14 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
   About 2.9 useful experiments per 10 calls is the base-model baseline a LoRA has to beat.
 - **Research data collected:** 632 completed experiments on BTC (hourly) and SPY, QQQ and TLT (daily), 0 crashes. First-try valid rate is 54–65% per market, and useful experiments per 10 LLM calls range from 1.5 (BTC) to 2.7 (QQQ). About a third of all LLM calls were rejected repeats (289 duplicates, 99 exhausted idea families), the clearest thing for LoRA to improve.
+- **LoRA v1 vs base Qwen on the held-out ETH and GLD** (first 9 paired runs, 10 hypotheses each):
+  - useful experiments per 10 LLM calls: 1.88 → 2.76
+  - first-try valid: 60% → 79%
+  - experiments holding up on validation: 39% → 55%
+  - unit mistakes: 48% → 29% of experiments; automatic corrections 17 → 3
+  - idea families per run: 7.0 → 6.5 (slightly less diverse)
+
+  LoRA was better in 7 of 9 pairs, but the 95% bootstrap CI of the mean difference (−1.15 to +2.32) still includes 0. It's clear on GLD (4 of 4, +2.1) and mixed on ETH (3 of 5, −0.4); the training data was 80% daily markets. More seeds are needed before calling it.
 
 ## Problems and fixes
 
@@ -94,6 +102,10 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → Line-buffered output plus a line after every step (`epoch 1/3, step 5/51 ... ~38 min left`). The first run (v1, 129 examples) lowered validation loss from 0.419 (base Qwen) to 0.087, 0.075 and 0.071 over 3 epochs (no overfitting yet; epoch 3 kept).
 36. **Base and LoRA runs in parallel could crash each other.** Run ids were the start time to the second, so two runs starting in the same second would collide.
     → Run ids get a short random suffix. `scripts/compare_lora.sh <gpu> [--adapter ...]` runs the held-out comparison (ETH + GLD, seeds 1–5) on one GPU.
+37. **Our runs held ~0.3 GB on every GPU, including other users' GPUs.** The memory log queried all 5 GPUs, which opens a CUDA context on each.
+    → The log only reports the GPU the process uses.
+38. **Base vs LoRA was judged by eye from a long table,** with rejection codes mixed across models.
+    → `python -m src.research.runs` pairs runs by market and seed and prints wins, the mean difference and a bootstrap 95% CI, plus rejection codes per model.
 
 ## Still open
 

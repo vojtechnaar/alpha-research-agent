@@ -34,12 +34,12 @@ def require_cuda() -> None:
         print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
 
 
-def gpu_memory() -> str:
-    """Allocated/reserved memory per GPU, for logging."""
-    return ", ".join(
-        f"GPU {i} {torch.cuda.memory_allocated(i) / GIB:.1f}/{torch.cuda.memory_reserved(i) / GIB:.1f} GiB"
-        for i in range(torch.cuda.device_count())
-    )
+def gpu_memory(device: str) -> str:
+    """Allocated/reserved memory on the GPU this process uses, for logging.
+
+    Only that GPU: querying every device would open a CUDA context (~0.3 GB) on other users' GPUs.
+    """
+    return f"{device} {torch.cuda.memory_allocated(device) / GIB:.1f}/{torch.cuda.memory_reserved(device) / GIB:.1f} GiB"
 
 
 class QwenGenerator:
@@ -75,7 +75,7 @@ class QwenGenerator:
                          "enable_thinking": enable_thinking, **self.generation_kwargs}
         self.last_stats: dict[str, float] = {}
         print(f"Loaded {model_id}{f' + LoRA {adapter}' if adapter else ''} on {device} "
-              f"in {time.perf_counter() - start:.0f}s ({gpu_memory()})")
+              f"in {time.perf_counter() - start:.0f}s ({gpu_memory(device)})")
 
     def generate(self, messages: list[dict[str, str]], n: int = 1, seed: int | None = None,
                  temperature: float | None = None) -> list[str]:
@@ -111,4 +111,4 @@ if __name__ == "__main__":
     generator = QwenGenerator(max_new_tokens=300)
     start = time.perf_counter()
     reply = generator.generate([{"role": "user", "content": prompt}])[0]
-    print(f"\n{reply}\n\n({time.perf_counter() - start:.1f}s, {gpu_memory()})")
+    print(f"\n{reply}\n\n({time.perf_counter() - start:.1f}s, {gpu_memory(generator.settings['device'])})")

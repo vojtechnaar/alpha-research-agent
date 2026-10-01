@@ -12,7 +12,7 @@ from src.agents.research import LoopSettings, run_research
 from src.data.download_yahoo import output_path, to_ohlcv
 from src.research.benchmarks import load_benchmarks
 from src.research.experiment import ExperimentSettings
-from src.research.runs import main as runs_main, summarize_run, totals
+from src.research.runs import main as runs_main, paired_comparison, summarize_run, totals
 
 from conftest import make_hourly_data
 
@@ -64,3 +64,18 @@ def test_run_metrics(tmp_path: Path, settings: ExperimentSettings) -> None:
     assert table.loc[0, "runs"] == 2 and table.loc[0, "llm_calls"] == 4
     assert runs_main([str(tmp_path)]) == 0
     assert runs_main([str(tmp_path), "--datasets", "GLD"]) == 0  # no matching runs: handled
+
+
+def test_paired_comparison_matches_runs_by_market_and_seed() -> None:
+    rows = [("Qwen/Qwen3-8B", "ETH/USD", 1, 1.0), ("Qwen/Qwen3-8B+v1", "ETH/USD", 1, 3.0),
+            ("Qwen/Qwen3-8B", "ETH/USD", 2, 2.0), ("Qwen/Qwen3-8B+v1", "ETH/USD", 2, 1.0),
+            ("Qwen/Qwen3-8B", "GLD", 1, 0.0), ("Qwen/Qwen3-8B+v1", "GLD", 1, 2.0),
+            ("Qwen/Qwen3-8B+v1", "GLD", 9, 5.0)]  # no base run with seed 9: not a pair
+    table = pd.DataFrame(rows, columns=["model", "dataset", "seed", "useful_per_10_calls"])
+    result = paired_comparison(table)
+    assert result["base"] == "Qwen/Qwen3-8B" and result["other"] == "Qwen/Qwen3-8B+v1"
+    assert (result["pairs"], result["wins"], result["losses"]) == (3, 2, 1)
+    assert result["mean_difference"] == 1.0
+    assert result["ci95"][0] <= 1.0 <= result["ci95"][1]
+    assert result["per_dataset"]["GLD"] == {"pairs": 1, "wins": 1, "mean_difference": 2.0}
+    assert paired_comparison(table[table["model"] == "Qwen/Qwen3-8B"]) is None  # one model: nothing to pair

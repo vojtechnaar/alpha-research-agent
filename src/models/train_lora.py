@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         val = validation_loss()
         history.append({"epoch": epoch, "train_loss": sum(running) / len(running), "val_loss": val})
         print(f"epoch {epoch}/{args.epochs}: train loss {history[-1]['train_loss']:.4f}, validation loss {val:.4f} "
-              f"({time.perf_counter() - started:.0f}s, {gpu_memory()})")
+              f"({time.perf_counter() - started:.0f}s, {gpu_memory(args.device)})")
         if not splits["val"] or val < best:  # keep the adapter that generalises best
             best = val
             model.save_pretrained(out_dir)

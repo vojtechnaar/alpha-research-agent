@@ -4,6 +4,9 @@
     python -m src.research.runs data/research_runs --by model
     python -m src.research.runs --by model --datasets ETH/USD GLD   # base vs LoRA on held-out markets
 
+With exactly two models (e.g. Qwen/Qwen3-8B and Qwen/Qwen3-8B+v1), runs on the same market with the
+same seed are also compared in pairs: wins, mean difference and a bootstrap 95% confidence interval.
+
 These are the metrics for "is Qwen + LoRA a better researcher than base Qwen?" (see docs/progress.md).
 Collecting base-model runs now builds the baseline that a LoRA adapter has to beat.
 
@@ -26,6 +29,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from src.research.records import ExperimentRecord, load_records
@@ -81,6 +85,7 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
         "run": run_dir.name,
         "model": model,
         "dataset": info.get("dataset") or (records[0].dataset if records else ""),
+        "seed": info.get("loop", {}).get("seed"),
         "iterations": len(records),
         "completed": len(completed),
         "llm_calls": calls,
@@ -115,6 +120,30 @@ def totals(table: pd.DataFrame, by: str = "model") -> pd.DataFrame:
     return sums.reset_index()
 
 
+def paired_comparison(table: pd.DataFrame, metric: str = "useful_per_10_calls", n_boot: int = 10_000,
+                       seed: int = 0) -> dict[str, Any] | None:
+    """Two models on the same (market, seed) pairs: wins and a bootstrap 95% CI of the mean difference.
+
+    The base is the model whose name is shorter (Qwen/Qwen3-8B vs Qwen/Qwen3-8B+v1). None unless there
+    are exactly two models and at least one pair.
+    """
+    models = sorted(table["model"].unique(), key=len)
+    if len(models) != 2:
+        return None
+    base, other = models
+    wide = table.pivot_table(index=["dataset", "seed"], columns="model", values=metric, aggfunc="mean").dropna()
+    if wide.empty or not set(models) <= set(wide.columns):
+        return None
+    diff = wide[other] - wide[base]
+    means = np.random.default_rng(seed).choice(diff.to_numpy(), size=(n_boot, len(diff))).mean(axis=1)
+    per_dataset = {d: {"pairs": len(g), "wins": int((g > 0).sum()), "mean_difference": round(float(g.mean()), 2)}
+                   for d, g in diff.groupby(level="dataset")}
+    return {"base": base, "other": other, "metric": metric, "pairs": len(diff), "wins": int((diff > 0).sum()),
+            "losses": int((diff < 0).sum()), "mean_difference": round(float(diff.mean()), 2),
+            "ci95": tuple(round(float(x), 2) for x in np.percentile(means, [2.5, 97.5])),
+            "per_dataset": per_dataset}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Summarise saved research runs.")
     p.add_argument("runs_dir", type=Path, nargs="?", default=DEFAULT_RUNS_DIR)
@@ -134,10 +163,20 @@ def main(argv: list[str] | None = None) -> int:
         print(table.drop(columns=["rejection_codes"]).to_string(index=False))
         print(f"\nTotals per {args.by}:")
         print(totals(table, args.by).to_string(index=False))
-    codes = Counter()
-    for c in table["rejection_codes"]:
-        codes.update(c)
-    print(f"\nRejection codes over all runs: {dict(codes) or 'none'}")
+    print()
+    for name, group in table.groupby(args.by):
+        codes = Counter()
+        for c in group["rejection_codes"]:
+            codes.update(c)
+        print(f"Rejection codes, {name}: {dict(codes) or 'none'}")
+    paired = paired_comparison(table)
+    if paired:
+        lo, hi = paired["ci95"]
+        print(f"\nPaired by market and seed ({paired['metric']}): {paired['other']} vs {paired['base']}")
+        print(f"  better in {paired['wins']} of {paired['pairs']} pairs, worse in {paired['losses']}; "
+              f"mean difference {paired['mean_difference']:+.2f}, 95% bootstrap CI [{lo:+.2f}, {hi:+.2f}]")
+        for dataset, d in paired["per_dataset"].items():
+            print(f"  {dataset}: better in {d['wins']} of {d['pairs']}, mean difference {d['mean_difference']:+.2f}")
     return 0
 
 
