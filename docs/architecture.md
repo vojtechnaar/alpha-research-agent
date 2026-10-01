@@ -224,4 +224,11 @@ python -m src.agents.research ... --device cuda:2      # or: QWEN_DEVICE=cuda:2 
 
 Choose a GPU with at least about 20 GB free and no heavy processes. Never kill other users' processes.
 
+Safest on a shared server: make only that GPU visible, so no library can touch the others (loading a LoRA adapter otherwise opened a small context on every GPU and put the adapter on GPU 0). Inside the process it is then `cuda:0`:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 python -m src.agents.research ... --device cuda:0 --backend cuda --backtest-device 0
+CUDA_VISIBLE_DEVICES=2 python -m src.models.train_lora --device cuda:0
+```
+
 With `--backend cuda`, the backtests run on `--backtest-device` (default `$BACKTEST_DEVICE` or 0). They need little memory: the feature buffers and a metrics table, typically well under 1 GB. So they can share the GPU with Qwen, or use another free one. The LLM and the backtests take turns within an iteration, so they never compete for the GPU at the same time.

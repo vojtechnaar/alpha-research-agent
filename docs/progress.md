@@ -103,7 +103,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 36. **Base and LoRA runs in parallel could crash each other.** Run ids were the start time to the second, so two runs starting in the same second would collide.
     → Run ids get a short random suffix. `scripts/compare_lora.sh <gpu> [--adapter ...]` runs the held-out comparison (ETH + GLD, seeds 1–5) on one GPU.
 37. **Our runs held ~0.3 GB on every GPU, including other users' GPUs.** The memory log queried all 5 GPUs, which opens a CUDA context on each.
-    → The log only reports the GPU the process uses.
+    → The log only reports the GPU the process uses. That wasn't the only cause: loading the LoRA adapter still opened contexts on every GPU and put the adapter on GPU 0. So runs now make only their own GPU visible (`CUDA_VISIBLE_DEVICES`), which `scripts/compare_lora.sh` does automatically.
 38. **Base vs LoRA was judged by eye from a long table,** with rejection codes mixed across models.
     → `python -m src.research.runs` pairs runs by market and seed and prints wins, the mean difference and a bootstrap 95% CI, plus rejection codes per model.
 

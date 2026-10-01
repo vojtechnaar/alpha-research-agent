@@ -15,7 +15,10 @@ GLD=data/raw/yahoo_GLD_1d.parquet
 for f in "$ETH" "$GLD"; do
   [ -f "$f" ] || { echo "Missing $f"; exit 1; }
 done
-COMMON=(--hypotheses 10 --backend cuda --device "cuda:$GPU" --backtest-device "$GPU")
+# Only this GPU is visible to the process (inside it, it is cuda:0), so no library can open
+# contexts or put tensors on other users' GPUs (loading a LoRA adapter did).
+export CUDA_VISIBLE_DEVICES=$GPU
+COMMON=(--hypotheses 10 --backend cuda --device cuda:0 --backtest-device 0)
 DAILY=(--train-start 2005-01-01 --train-end 2019-01-01 --validation-start 2019-01-01 --validation-end 2023-01-01
        --periods-per-year 252 --transaction-cost 0.0002)
 for seed in ${SEEDS:-1 2 3 4 5}; do
