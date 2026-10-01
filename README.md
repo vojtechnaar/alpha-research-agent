@@ -7,9 +7,9 @@ An automated quantitative crypto research system:
 
 - [docs/architecture.md](docs/architecture.md): the pipeline, the research loop, the splits, records and design decisions.
 - [docs/strategy_engine.md](docs/strategy_engine.md): the spec format, features, operators, experiments, the backend interface and the CUDA mapping.
-- [docs/progress.md](docs/progress.md): a dated development log of what was built, what the experiments showed, known issues and next steps.
+- [docs/progress.md](docs/progress.md): what had to be fixed and how, what the experiments showed, open issues and the LoRA plan.
 
-**Current milestone:** the research loop runs on the native C++/CUDA backtest engine, which is parity-tested against Python. LoRA training comes next.
+**Current milestone:** LoRA adapter v1 is trained on 164 good research steps; base vs LoRA is being compared on the held-out markets ETH and GLD.
 
 | Path | What it does |
 |---|---|
@@ -57,8 +57,9 @@ python -m src.research.runs                                                    #
 # LoRA: build the training set from saved runs (ETH and GLD held out), train, compare
 python -m src.models.lora_data
 python -m src.models.train_lora --device cuda:0 --name v1
-python -m src.agents.research --data data/raw/yahoo_GLD_1d.parquet ... --adapter checkpoints/lora/v1
-python -m src.research.runs --by model                                         # base vs LoRA
+bash scripts/compare_lora.sh 2                                                 # base Qwen on ETH + GLD, seeds 1-5
+bash scripts/compare_lora.sh 4 --adapter checkpoints/lora/v1                  # the same with LoRA
+python -m src.research.runs --by model --datasets ETH/USD GLD                  # base vs LoRA
 
 # Confirm chosen experiments without the LLM: on another asset, then ONCE on the final test (2025+)
 python -m src.research.confirm data/research_runs/<run_id>/experiments.jsonl --experiments 3 6 \
