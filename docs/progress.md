@@ -90,6 +90,8 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → `python -m src.models.lora_data` keeps only good research steps: useful, no unit problems, text consistent with the long/short rule, no repeats. ETH and GLD are always held out. The target is the validated proposal as compact JSON. `python -m src.models.train_lora` trains a LoRA adapter (frozen bf16 base, loss on the proposal only, best validation loss kept), and `--adapter` runs the research loop with it.
 34. **LoRA training dropped over half the examples and nearly ran out of GPU memory.** Prompts (rules, typical values, feedback) are 3–6k tokens: 57% were over the 4,096-token limit. The model's output over the whole sequence (tokens × 152k vocabulary, about 2.4 GB) was allocated just to compute a loss on the ~300-token proposal.
     → The loss is computed from outputs for the proposal tokens only (`logits_to_keep`). A test checks it equals the standard loss exactly, and that only the LoRA weights get gradients. The limit is raised to 8,192 tokens, so all examples fit, and the log prints token lengths.
+35. **Training looked stuck for 20 minutes.** Output redirected to a log file is buffered, so nothing showed up until the end, and there was no progress inside an epoch.
+    → Line-buffered output plus a line after every step (`epoch 1/3, step 5/51 ... ~38 min left`). The first run (v1, 129 examples) lowered validation loss from 0.419 (base Qwen) to 0.087, 0.075 and 0.071 over 3 epochs (no overfitting yet; epoch 3 kept).
 
 ## Still open
 
@@ -113,7 +115,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
    Built: `python -m src.models.lora_data`.
 3. **Train** a LoRA adapter (PEFT) for Qwen3-8B on one A6000. Built: `python -m src.models.train_lora`.
 4. **Measure base vs LoRA:**
-   - **Setup:** the same held-out markets (ETH, GLD), the same settings, and the same number of runs with the same seeds for both models (e.g. 5 runs × 10 hypotheses each). Compare runs in pairs by seed.
+   - **Setup:** the same held-out markets (ETH, GLD), the same settings, and the same number of runs with the same seeds for both models (e.g. 5 runs × 10 hypotheses each). Compare runs in pairs by seed. Run: `bash scripts/compare_lora.sh <gpu> [--adapter checkpoints/lora/v1]`.
    - **Primary metric,** fixed in advance: *useful experiments per 10 LLM calls* (from `python -m src.research.runs`).
    - **Secondary metrics:** first-try valid rate, LLM calls per completed experiment, rejection codes, unit problems, idea families per run, share holding up on validation, train → validation degradation.
    - **Decision rule:** LoRA is better if the primary metric improves in most paired runs (e.g. at least 4 of 5) with a bootstrap confidence interval above 0, and no secondary quality metric gets worse.

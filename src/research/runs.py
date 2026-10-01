@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.datasets and not table.empty:
         table = table[table["dataset"].isin(args.datasets)]
     if table.empty:
-        print(f"No runs yet in {args.runs_dir}")
+        print(f"No runs yet in {args.runs_dir}" + (f" on {', '.join(args.datasets)}" if args.datasets else ""))
         return 0
     with pd.option_context("display.width", 200, "display.max_columns", 30):
         print(table.drop(columns=["rejection_codes"]).to_string(index=False))
