@@ -15,14 +15,14 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
   About 2.9 useful experiments per 10 calls is the base-model baseline a LoRA has to beat.
 - **Research data collected:** 632 completed experiments on BTC (hourly) and SPY, QQQ and TLT (daily), 0 crashes. First-try valid rate is 54–65% per market, and useful experiments per 10 LLM calls range from 1.5 (BTC) to 2.7 (QQQ). About a third of all LLM calls were rejected repeats (289 duplicates, 99 exhausted idea families), the clearest thing for LoRA to improve.
-- **LoRA v1 vs base Qwen on the held-out ETH and GLD** (first 9 paired runs, 10 hypotheses each):
-  - useful experiments per 10 LLM calls: 1.88 → 2.76
-  - first-try valid: 60% → 79%
-  - experiments holding up on validation: 39% → 55%
-  - unit mistakes: 48% → 29% of experiments; automatic corrections 17 → 3
-  - idea families per run: 7.0 → 6.5 (slightly less diverse)
+- **LoRA v1 vs base Qwen on the held-out ETH and GLD** (10 paired runs: seeds 1–5 on each market, 10 hypotheses each):
+  - useful experiments per 10 LLM calls: 1.88 → 2.59
+  - first-try valid: 60% → 73%
+  - experiments holding up on validation: 39% → 54%
+  - unit mistakes: 48% → 31% of experiments; automatic corrections 17 → 3
+  - idea families per run: 7.0 → 6.7 (slightly less diverse)
 
-  LoRA was better in 7 of 9 pairs, but the 95% bootstrap CI of the mean difference (−1.15 to +2.32) still includes 0. It's clear on GLD (4 of 4, +2.1) and mixed on ETH (3 of 5, −0.4); the training data was 80% daily markets. More seeds are needed before calling it.
+  LoRA was better in 7 of 10 pairs, but the 95% bootstrap CI of the mean difference (−1.08 to +2.11) still includes 0. It's clear on GLD (4 of 5, +1.65) and mixed on ETH (3 of 5, −0.40); the training data was 80% daily markets. LoRA writes clearly better proposals; whether it finds more useful ideas needs more seeds (6–15 running).
 
 ## Problems and fixes
 
