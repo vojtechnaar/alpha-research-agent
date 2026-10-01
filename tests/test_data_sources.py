@@ -64,6 +64,7 @@ def test_run_metrics(tmp_path: Path, settings: ExperimentSettings) -> None:
     assert table.loc[0, "runs"] == 2 and table.loc[0, "llm_calls"] == 4
     assert runs_main([str(tmp_path)]) == 0
     assert runs_main([str(tmp_path), "--datasets", "GLD"]) == 0  # no matching runs: handled
+    assert runs_main([str(tmp_path), "--models", "Qwen/Qwen3-8B+v9"]) == 0  # no such model: handled
 
 
 def test_paired_comparison_matches_runs_by_market_and_seed() -> None:

@@ -3,6 +3,7 @@
     python -m src.research.runs                      # every run in data/research_runs/
     python -m src.research.runs data/research_runs --by model
     python -m src.research.runs --by model --datasets ETH/USD GLD   # base vs LoRA on held-out markets
+    python -m src.research.runs --datasets ETH/USD GLD --models Qwen/Qwen3-8B Qwen/Qwen3-8B+v2
 
 With exactly two models (e.g. Qwen/Qwen3-8B and Qwen/Qwen3-8B+v1), runs on the same market with the
 same seed are also compared in pairs: wins, mean difference and a bootstrap 95% confidence interval.
@@ -152,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("runs_dir", type=Path, nargs="?", default=DEFAULT_RUNS_DIR)
     p.add_argument("--by", default="model", choices=["model", "dataset"])
     p.add_argument("--datasets", nargs="+", help="only runs on these markets (e.g. the held-out ETH/USD GLD)")
+    p.add_argument("--models", nargs="+", help="only these models, e.g. Qwen/Qwen3-8B Qwen/Qwen3-8B+v2 "
+                                              "(the paired comparison needs exactly two)")
     args = p.parse_args(argv)
     if not args.runs_dir.exists():
         print(f"No runs yet in {args.runs_dir}")
@@ -159,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     table = summarize_runs(args.runs_dir)
     if args.datasets and not table.empty:
         table = table[table["dataset"].isin(args.datasets)]
+    if args.models and not table.empty:
+        table = table[table["model"].isin(args.models)]
     if table.empty:
         print(f"No runs yet in {args.runs_dir}" + (f" on {', '.join(args.datasets)}" if args.datasets else ""))
         return 0
