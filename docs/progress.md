@@ -15,14 +15,16 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
   About 2.9 useful experiments per 10 calls is the base-model baseline a LoRA has to beat.
 - **Research data collected:** 632 completed experiments on BTC (hourly) and SPY, QQQ and TLT (daily), 0 crashes. First-try valid rate is 54–65% per market, and useful experiments per 10 LLM calls range from 1.5 (BTC) to 2.7 (QQQ). About a third of all LLM calls were rejected repeats (289 duplicates, 99 exhausted idea families), the clearest thing for LoRA to improve.
-- **LoRA v1 vs base Qwen on the held-out ETH and GLD** (10 paired runs: seeds 1–5 on each market, 10 hypotheses each):
-  - useful experiments per 10 LLM calls: 1.88 → 2.59
-  - first-try valid: 60% → 73%
-  - experiments holding up on validation: 39% → 54%
-  - unit mistakes: 48% → 31% of experiments; automatic corrections 17 → 3
-  - idea families per run: 7.0 → 6.7 (slightly less diverse)
+- **LoRA v1 vs base Qwen on the held-out ETH and GLD** (30 paired runs: seeds 1–15 on each market, 10 hypotheses each, about 300 experiments per model):
+  - useful experiments per 10 LLM calls: 2.39 → 2.84
+  - first-try valid: 67% → 71%
+  - experiments holding up on validation: 48% → 55%
+  - automatic corrections: 43 → 8 (it learned to write `momentum` instead of `returns` with a lookback)
+  - unit mistakes: 34% → 31% of experiments
+  - rejected repeats (duplicates + exhausted families): 35% → 31% of LLM calls
+  - idea families per run: 7.1 → 7.0 (no loss of diversity)
 
-  LoRA was better in 7 of 10 pairs, but the 95% bootstrap CI of the mean difference (−1.08 to +2.11) still includes 0. It's clear on GLD (4 of 5, +1.65) and mixed on ETH (3 of 5, −0.40); the training data was 80% daily markets. LoRA writes clearly better proposals; whether it finds more useful ideas needs more seeds (6–15 running).
+  **Verdict: not proven.** LoRA was better in 17 of 30 pairs, with a mean difference of +0.39 useful experiments per 10 calls, but the 95% bootstrap CI (−0.43 to +1.19) includes 0. It learned the mechanics (format, corrections) but not to stop repeating ideas, the biggest waste for both models. The first 10 pairs looked better (+0.63, 7 of 10): small samples overstate effects, which is why the decision rule and the number of seeds were fixed in advance.
 
 ## Problems and fixes
 
@@ -109,6 +111,7 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 
 ## Still open
 
+- **The comparison ran with a 1,000-candidate budget** (`scripts/compare_lora.sh`), while the training data was collected with 20,000. That's the same for both models, so the comparison is fair, but LoRA saw a slightly different prompt than in training. Keep 1,000 for comparisons with the existing 30 base runs, or rerun base when changing it.
 - **The hypothesis text often contradicts the rule,** e.g. "may reverse upward" with a *short* rule, or "near recent lows" with "5% above the average". The engine tests the rule correctly, but these records would teach LoRA sloppy reasoning. Possible fix: have Qwen state the direction explicitly and check it against `true_position`, or filter such records out of the LoRA data.
 - **Confirm the best idea:** run `src.research.confirm` for the best experiments on ETH, then once on the 2025+ final test, and report the result honestly, whatever it is.
 - **Qwen's research judgement:** short ideas keep failing in this mostly bull-market sample, but Qwen keeps proposing them. The family limit forces variety but not *good* ideas. This is the target for LoRA fine-tuning on the collected experiment records.

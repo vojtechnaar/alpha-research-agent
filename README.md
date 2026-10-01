@@ -55,6 +55,7 @@ python -m src.research.report data/research_runs/<run_id>/experiments.jsonl   # 
 python -m src.research.runs                                                    # metrics of all saved runs
 
 # LoRA: build the training set from saved runs (ETH and GLD held out), train, compare
+bash scripts/collect.sh 2 5 [--adapter checkpoints/lora/v1]                    # collect runs on GPU 2 for 5 hours (BTC SPY QQQ TLT)
 python -m src.models.lora_data
 python -m src.models.train_lora --device cuda:0 --name v1
 bash scripts/compare_lora.sh 2                                                 # base Qwen on ETH + GLD, seeds 1-5
