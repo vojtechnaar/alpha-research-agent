@@ -72,7 +72,7 @@ Specs, sweeps, the CLI and the LLM prompt pick it up without other changes. The 
 
 `volatility(close, L)` is the sample standard deviation of hourly simple returns over the last L bars. It is **not** annualised: multiply by √8760 ≈ 93.6 for an annualised figure. For crypto, 40–110% annualised volatility is about 0.004–0.012 per hour.
 
-That's why the first sweep's volatility thresholds (0.01, 0.02, 0.03) barely mattered: hourly volatility is rarely above 0.02, so a `< 0.02` filter almost never binds. `configs/sweeps/momentum_low_volatility_extended.json` uses `[0.004, 0.006, 0.008, 0.012]` instead, and longer momentum lookbacks (24–336 h), giving 600 candidates. The original `momentum_low_volatility.json` stays unchanged so the first experiment can be reproduced.
+That's why the first sweep's volatility thresholds (0.01, 0.02, 0.03) barely mattered: hourly volatility is rarely above 0.02, so a `< 0.02` filter almost never binds. `configs/sweeps/momentum_low_volatility_extended.json` uses `[0.004, 0.006, 0.008, 0.012]` instead, and longer momentum lookbacks (24–336 h), giving 600 candidates.
 
 Check the actual distribution on your data before trusting any threshold:
 

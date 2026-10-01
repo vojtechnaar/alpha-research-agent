@@ -1,6 +1,0 @@
-{
-  "momentum.lookback": [6, 12, 24, 48, 72],
-  "momentum.threshold": [0.005, 0.01, 0.015, 0.02, 0.03],
-  "volatility.lookback": [6, 12, 24, 48],
-  "volatility.threshold": [0.01, 0.02, 0.03]
-}

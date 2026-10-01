@@ -6,12 +6,12 @@
 
     # train-only sweep
     python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
-        --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility.json \
+        --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility_extended.json \
         --start 2017-01-01 --end 2023-01-01
 
     # train sweep -> top N frozen -> validation retest -> benchmarks -> experiment record
     python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
-        --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility.json \
+        --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility_extended.json \
         --train-start 2017-01-01 --train-end 2023-01-01 \
         --validation-start 2023-01-01 --validation-end 2025-01-01 --top 10
 
