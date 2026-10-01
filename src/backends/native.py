@@ -8,6 +8,9 @@ What runs where:
           positions) and computes the period returns with the same function as the Python engine.
   native  computes each feature buffer once, then backtests every candidate and returns only the
           metrics table (no per-bar series cross back).
+
+Used by: backends/__init__.py (get_evaluator('cpp' | 'cuda')). Loads the libraries that
+         cuda/Makefile builds from cuda/backtest.cu.
 """
 
 from __future__ import annotations

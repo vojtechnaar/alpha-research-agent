@@ -8,6 +8,11 @@ Divisions by zero and infinities become NaN.
 Parameters such as `lookback` are always runtime arguments, never baked into a function. The
 native C++/CUDA engine (cuda/backtest.cu, feature_value) implements every entry of FEATURE_REGISTRY
 with the same parameters and semantics (see docs/strategy_engine.md).
+
+Used by: strategies/evaluator.py (computes the features), strategies/schema.py (validates feature
+         names and lookbacks), agents/prompts.py (lists the features and their hints for Qwen),
+         agents/proposals.py (the returns -> momentum rewrite), research/feature_ranges.py (typical
+         values). Mirrored in cuda/backtest.cu (feature_value).
 """
 
 from __future__ import annotations

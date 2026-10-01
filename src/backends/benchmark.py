@@ -7,6 +7,8 @@
 Python is slow (~25 ms/candidate), so by default it only runs the first --python-limit candidates
 and its full-sweep time is extrapolated. Every backend's results on those candidates are compared
 with Python's (max absolute metric differences, and trade-count mismatches).
+
+Used by: nothing else: a CLI run by hand; it produced the speed table in docs/strategy_engine.md.
 """
 
 from __future__ import annotations

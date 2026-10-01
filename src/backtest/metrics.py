@@ -1,4 +1,9 @@
-"""Performance metrics for backtest results produced by src.backtest.engine.run_backtest."""
+"""Performance metrics for backtest results produced by src.backtest.engine.run_backtest.
+
+Used by: strategies/evaluator.py (compute_metrics after every Python backtest), backends/native.py
+         (METRIC_NAMES: the column order the C++/CUDA engine writes), backends/benchmark.py.
+         HOURS_PER_YEAR is the default annualisation everywhere (CLIs, experiments, sweeps).
+"""
 
 from __future__ import annotations
 

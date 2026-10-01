@@ -7,6 +7,12 @@ Cartesian product itself.
 period and returns one metrics row per candidate. Everything above it (train/validation
 experiments, benchmarks, records, the LLM loop) only depends on that contract, so a C++ or
 CUDA implementation with the same signature can replace it (see CandidateEvaluator).
+
+Used by: research/experiment.py (candidates on train, the top N on validation), backends/__init__.py
+         (evaluate_candidates is the Python backend, CandidateEvaluator the contract every backend
+         follows), research/benchmarks.py, research/summary.py (summarize_sweep),
+         agents/proposals.py (parameter_grid for the already-tested check), strategies/run.py,
+         backends/benchmark.py.
 """
 
 from __future__ import annotations

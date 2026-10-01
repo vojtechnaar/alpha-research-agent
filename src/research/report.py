@@ -1,6 +1,9 @@
 """Human-readable reports from experiment records (fresh or loaded from JSONL).
 
     python -m src.research.report data/research_runs/<run_id>/experiments.jsonl
+
+Used by: agents/research.py and strategies/run.py (format_record prints every experiment); also a
+         CLI.
 """
 
 from __future__ import annotations

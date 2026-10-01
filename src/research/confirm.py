@@ -19,6 +19,8 @@ Cross-asset reports two things:
 
 Every final-test use is appended to results/final_test_log.jsonl and the command warns if the
 test has been used before: each look at the test turns it a little more into validation data.
+
+Used by: nothing else: a CLI run by hand for cross-asset checks and the one-time final test.
 """
 
 from __future__ import annotations

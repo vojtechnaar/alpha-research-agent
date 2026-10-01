@@ -20,6 +20,11 @@ addressed as "<id>.<param>", e.g. "momentum.lookback" or "vol.threshold".
 Only features/operators in the trusted registries are accepted. Anything else raises SpecError
 with code UNSUPPORTED_FEATURE / UNSUPPORTED_OPERATOR / INVALID_SPEC; nothing is ever executed
 from the spec itself.
+
+Used by: almost every module: the evaluators (Python and native) and benchmarks run StrategySpecs;
+         agents/proposals.py and agents/research.py use ResearchProposal and the error codes;
+         identity()/family() drive the duplicate and family checks; records store specs via
+         to_dict().
 """
 
 from __future__ import annotations

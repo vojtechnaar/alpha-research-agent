@@ -1,6 +1,9 @@
 """Turn raw LLM text into a validated ResearchProposal, or reject it with a machine-readable code.
 
 Nothing in the reply is executed: it is parsed as JSON and validated against the registries.
+
+Used by: agents/research.py (parse_proposal on every LLM reply, candidate_identities to remember
+         what was tested).
 """
 
 from __future__ import annotations

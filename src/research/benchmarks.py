@@ -3,6 +3,9 @@
 Benchmarks are ordinary StrategySpec files in configs/benchmarks/. Unconditional ones have no
 conditions (buy-and-hold: always long; flat: always in cash). They run through the same
 backend, costs and periods as the candidates, so the comparison is like-for-like.
+
+Used by: research/experiment.py (benchmarks on the same periods and costs as every experiment),
+         agents/research.py, strategies/run.py and research/confirm.py (load_benchmarks).
 """
 
 from __future__ import annotations

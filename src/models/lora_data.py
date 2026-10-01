@@ -14,6 +14,9 @@ Only GOOD research steps become examples (a high train Sharpe alone is not enoug
 Held-out markets (default ETH/USD and GLD) are never used, so base vs LoRA can be compared on them.
 
     python -m src.models.lora_data                     # -> data/lora/train.jsonl, data/lora/val.jsonl
+
+Used by: models/train_lora.py (tokenize_example, DEFAULT_OUT_DIR); also the CLI that writes
+         data/lora/.
 """
 
 from __future__ import annotations

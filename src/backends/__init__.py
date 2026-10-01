@@ -3,6 +3,9 @@
     python  pandas reference implementation (src.strategies.sweep.evaluate_candidates)
     cpp     C++ on the CPU      (cuda/build/libbacktest_cpu.so,  `make -C cuda cpu`)
     cuda    CUDA on one GPU     (cuda/build/libbacktest_cuda.so, `make -C cuda`)
+
+Used by: agents/research.py, strategies/run.py, research/confirm.py and backends/benchmark.py
+         (get_evaluator turns --backend into an evaluator).
 """
 
 from __future__ import annotations

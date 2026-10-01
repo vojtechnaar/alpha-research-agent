@@ -3,6 +3,10 @@
 Pipeline: validate -> compute features (registry) -> apply operators -> combine with AND/OR ->
 map to positions -> src.backtest.engine.run_backtest (which applies the one-bar execution lag)
 -> src.backtest.metrics.compute_metrics.
+
+Used by: strategies/sweep.py (evaluate_strategy per candidate, FeatureCache), research/experiment.py
+         (condition activity), research/feature_ranges.py (compute_feature), backends/native.py
+         (period_slice, so every engine cuts periods identically).
 """
 
 from __future__ import annotations

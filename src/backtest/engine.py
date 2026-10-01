@@ -3,6 +3,10 @@
 Timing convention: the signal at bar t is computed from data up to and including the close of
 bar t, the position is taken at that close, and it earns the return of bar t+1. The position is
 therefore shifted by one bar before it touches returns, so there is no look-ahead.
+
+Used by: strategies/evaluator.py (every Python-backend backtest goes through run_backtest),
+         backends/native.py (period_returns, so the C++/CUDA engines get identical returns),
+         strategies/sweep.py (DEFAULT_COST_BPS).
 """
 
 from __future__ import annotations
@@ -62,8 +66,8 @@ def run_backtest(
     out["return"] = period_returns(close)
     out["signal"] = signal
     out["position"] = signal_to_position(signal)
-    out["held_position"] = out["position"].shift(1, fill_value=0.0)
-    out["turnover"] = out["held_position"].diff().fillna(out["held_position"]).abs()
+    out["held_position"] = out["position"].shift(1, fill_value=0.0)  # decided one bar earlier: no look-ahead
+    out["turnover"] = out["held_position"].diff().fillna(out["held_position"]).abs()  # first bar: entry from flat
     out["cost"] = out["turnover"] * cost_bps / 10_000
     out["strategy_return"] = out["held_position"] * out["return"] - out["cost"]
     out["cumulative_return"] = (1 + out["strategy_return"]).cumprod() - 1

@@ -19,6 +19,9 @@ Per run:
   mistakes     automatic corrections, conditions (almost) never/always true
 The headline number is useful experiments per 10 LLM calls: research value per unit of the
 scarce resource (LLM time).
+
+Used by: models/lora_data.py (experiment_flags decides which experiments are useful training
+         examples); also the CLI that scores runs and compares base vs LoRA.
 """
 
 from __future__ import annotations

@@ -7,6 +7,10 @@ path. Records are appended to JSONL files, one line per experiment.
 
 They are the raw material for agent context, reproducibility and a future LoRA dataset, which
 is why validation, benchmark and warning information is kept next to every proposal.
+
+Used by: agents/research.py and strategies/run.py (create and append records), agents/prompts.py
+         (the feedback is built from records), research/report.py, research/runs.py,
+         research/confirm.py and models/lora_data.py (load_records).
 """
 
 from __future__ import annotations

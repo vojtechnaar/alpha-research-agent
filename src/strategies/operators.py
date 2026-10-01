@@ -2,6 +2,9 @@
 
 A condition's value per bar is 1.0 (true), 0.0 (false) or NaN (unknown: the feature is NaN, e.g.
 during warm-up). Combinators propagate NaN, and the evaluator maps NaN to a flat position.
+
+Used by: strategies/evaluator.py (applies operators and AND/OR), strategies/schema.py (validates
+         them), agents/prompts.py (lists them for Qwen). Mirrored in cuda/backtest.cu.
 """
 
 from __future__ import annotations

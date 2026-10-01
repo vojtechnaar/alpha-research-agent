@@ -3,6 +3,9 @@
 The system prompt lists exactly what FEATURE_REGISTRY / OPERATOR_REGISTRY / LOGIC_REGISTRY
 contain, so adding a primitive to a registry automatically makes it available to the LLM.
 Feedback is a compact text summary of recent experiments (no CSVs, no price history).
+
+Used by: agents/research.py (system prompt, first request, feedback after each experiment, repair
+         message after an invalid reply).
 """
 
 from __future__ import annotations

@@ -10,6 +10,8 @@ volume, symbol.
 Prices are split- and dividend-adjusted (auto_adjust), so returns include dividends and splits
 don't show up as crashes. Free Yahoo data only has long histories for daily bars. Markets without
 real volume (FX) get NaN volume, so volume features are undefined there instead of misleading.
+
+Used by: nothing else: a CLI. Its Parquet files are read with --data like the crypto ones.
 """
 
 from __future__ import annotations

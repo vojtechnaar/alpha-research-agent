@@ -4,6 +4,9 @@ Thresholds only make sense in a feature's units: a price-level feature such as r
 is never below 0, while volatility is a small per-bar fraction. Showing the model each feature's
 5th percentile / median / 95th percentile keeps its thresholds in range. Only train-period values
 are used, so nothing from validation or the final test leaks into the prompt.
+
+Used by: agents/research.py (computed once per run, on TRAIN only), agents/prompts.py (format_ranges
+         in the system prompt).
 """
 
 from __future__ import annotations

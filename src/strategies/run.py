@@ -19,6 +19,8 @@ Costs: --transaction-cost is a fraction of notional per unit of position change 
 10 bps). --cost-bps is the same thing in basis points (kept for older commands).
 
 Backend: --backend python (default) | cpp | cuda (see src/backends; build with make -C cuda).
+
+Used by: nothing else: a CLI for manual runs without the LLM.
 """
 
 from __future__ import annotations

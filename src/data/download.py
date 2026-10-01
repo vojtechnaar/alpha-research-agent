@@ -3,6 +3,9 @@
 Usage (from the repository root):
     python -m src.data.download                      # settings from configs/data.yaml
     python -m src.data.download --symbols BTC/USD --start 2024-01-01 --end 2024-01-02
+
+Used by: data/download_yahoo.py (save_parquet, PROJECT_ROOT). Its Parquet files are what every CLI
+         reads with --data.
 """
 
 from __future__ import annotations

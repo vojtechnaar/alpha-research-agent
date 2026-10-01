@@ -9,6 +9,9 @@ The whole model goes on ONE device (default: $QWEN_DEVICE, else cuda:0); Qwen3-8
 
 Sampling is seeded per call for approximate reproducibility; GPU kernels are not bit-exact, so
 identical outputs across runs are not guaranteed. temperature=0 uses greedy decoding.
+
+Used by: agents/research.py (QwenGenerator, imported lazily so tests need no torch),
+         models/train_lora.py (require_cuda, gpu_memory).
 """
 
 from __future__ import annotations

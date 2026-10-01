@@ -2,6 +2,9 @@
 
 The warnings are descriptive red flags, not statistical tests. Deflated/probabilistic Sharpe
 ratios, bootstrap intervals and multiple-testing corrections are future work (docs/architecture.md).
+
+Used by: research/records.py (summaries and warnings saved with every experiment),
+         research/confirm.py, research/runs.py (NEAR_BUY_AND_HOLD_EXPOSURE).
 """
 
 from __future__ import annotations

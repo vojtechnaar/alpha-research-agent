@@ -8,6 +8,8 @@ projections are trained (~0.5% of the parameters). The loss is on the assistant 
 proposal JSON) only. The adapter with the lowest validation loss is saved to
 checkpoints/lora/<name>/ and used with:  python -m src.agents.research ... --adapter checkpoints/lora/<name>
 Fits on one A6000 (48 GB) with gradient checkpointing.
+
+Used by: nothing else: a CLI. The adapter it saves is loaded by models/llm.py through --adapter.
 """
 
 from __future__ import annotations

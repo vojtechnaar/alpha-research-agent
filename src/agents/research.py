@@ -16,6 +16,10 @@ were invalid even after retries. A rejected proposal uses up its iteration. Ther
 
 Against repetition: an idea family (same rules, any parameter values) may be tested at most
 `max_per_family` times, and retries after a repeat are sampled at a higher temperature.
+
+Used by: scripts/collect.sh and scripts/compare_lora.sh, which start it. Its run folders
+         (data/research_runs/<run>/) are read by research/runs.py, research/report.py,
+         research/confirm.py and models/lora_data.py.
 """
 
 from __future__ import annotations
