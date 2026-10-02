@@ -9,8 +9,7 @@ with the same costs, through the same backend.
 Data after the validation end is cut off before anything runs, so a later final-test period is
 never touched by an experiment.
 
-Used by: agents/research.py (one run_experiment per hypothesis), strategies/run.py,
-         research/confirm.py. ExperimentSettings, Period and ExperimentResult are read by
+Used by: agents/research.py (one run_experiment per hypothesis), research/confirm.py. ExperimentSettings, Period and ExperimentResult are read by
          records.py, summary.py, feature_ranges.py and benchmarks.py.
 """
 

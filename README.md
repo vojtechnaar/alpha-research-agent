@@ -60,7 +60,7 @@ and formal statistics for multiple testing (deflated Sharpe ratio, walk-forward 
 | Path | What it does |
 |---|---|
 | `src/data/download.py` | Downloads hourly OHLCV to `data/raw/` (config: `configs/data.yaml`) |
-| `src/strategies/` | StrategySpec schema, feature and operator registries, evaluator, sweeps, CLI |
+| `src/strategies/` | StrategySpec schema, feature and operator registries, evaluator, sweeps |
 | `src/backtest/` | Backtest engine (execution lag, costs) and metrics |
 | `src/research/` | Train/validation experiments, benchmarks, summaries, experiment records, reports |
 | `src/agents/` | Prompts generated from the registries, proposal parsing, the bounded research loop |
@@ -76,12 +76,6 @@ python -m pytest                                   # offline tests: no network, 
 
 python -m src.data.download                        # hourly BTC/ETH history -> data/raw/ (server)
 python -m src.data.download_yahoo                  # daily SPY, QQQ, TLT, GLD, EURUSD -> data/raw/yahoo_*_1d.parquet
-
-# Train sweep -> top 10 frozen -> validation retest -> benchmarks -> experiment record
-python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
-    --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility_extended.json \
-    --train-start 2017-01-01 --train-end 2023-01-01 --validation-start 2023-01-01 --validation-end 2025-01-01 \
-    --top 10 --transaction-cost 0.001
 
 # Native engines (server): GPU + multi-core C++; then compare all three
 make -C cuda && make -C cuda cpu OMP=1

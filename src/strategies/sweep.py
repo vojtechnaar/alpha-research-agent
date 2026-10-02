@@ -11,7 +11,7 @@ CUDA implementation with the same signature can replace it (see CandidateEvaluat
 Used by: research/experiment.py (candidates on train, the top N on validation), backends/__init__.py
          (evaluate_candidates is the Python backend, CandidateEvaluator the contract every backend
          follows), research/benchmarks.py, research/summary.py (summarize_sweep),
-         agents/proposals.py (parameter_grid for the already-tested check), strategies/run.py,
+         agents/proposals.py (parameter_grid for the already-tested check),
          backends/benchmark.py.
 """
 
@@ -108,22 +108,6 @@ def evaluate_candidates(
             **result.metrics,
         })
     return pd.DataFrame(rows)
-
-
-def run_sweep(
-    data: pd.DataFrame,
-    base: StrategySpec,
-    space: ParameterSpace,
-    cost_bps: float = DEFAULT_COST_BPS,
-    periods_per_year: float = HOURS_PER_YEAR,
-    start: Any = None,
-    end: Any = None,
-    max_candidates: int = DEFAULT_MAX_CANDIDATES,
-    dataset: str = "",
-) -> pd.DataFrame:
-    """Generate every candidate and evaluate it on one dataset/period; one row per candidate."""
-    candidates = generate_candidates(base, space, max_candidates)
-    return evaluate_candidates(data, candidates, cost_bps, periods_per_year, start, end, dataset)
 
 
 def summarize_sweep(results: pd.DataFrame, metric: str = "sharpe", top: int = 5) -> dict[str, Any]:

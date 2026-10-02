@@ -165,17 +165,6 @@ def test_warnings_flag_multiple_testing_and_identical_candidates(data: pd.DataFr
     assert any("buy-and-hold" in w for w in warnings)
 
 
-def test_cli_transaction_cost_arguments() -> None:
-    from src.strategies.run import parse_args
-
-    base = ["spec.json", "--data", "data.parquet"]
-    assert parse_args(base).transaction_cost == 0.001  # explicit non-zero default
-    assert parse_args([*base, "--transaction-cost", "0.0005"]).transaction_cost == 0.0005
-    assert parse_args([*base, "--cost-bps", "20"]).transaction_cost == pytest.approx(0.002)
-    with pytest.raises(SystemExit):
-        parse_args([*base, "--cost-bps", "20", "--transaction-cost", "0.002"])
-
-
 def test_cost_summary_and_warning_for_a_churning_strategy(data: pd.DataFrame, settings: ExperimentSettings) -> None:
     churn = StrategySpec.from_dict({"name": "churn", "conditions": [
         {"id": "r", "feature": "returns", "field": "close", "operator": ">", "threshold": 0.0}]})

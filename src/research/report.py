@@ -2,7 +2,7 @@
 
     python -m src.research.report data/research_runs/<run_id>/experiments.jsonl
 
-Used by: agents/research.py and strategies/run.py (format_record prints every experiment); also a
+Used by: agents/research.py (format_record prints every experiment); also a
          CLI.
 """
 

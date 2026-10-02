@@ -116,7 +116,7 @@ data/research_runs/<run_id>/run.json             settings, loop limits, model + 
                                                  git commit, data path, benchmarks, system prompt
 data/research_runs/<run_id>/experiments.jsonl    one record per iteration (completed / rejected / failed)
 data/research_runs/<run_id>/sweeps/*.csv         full train table per experiment (only with --save-sweeps)
-results/experiments/manual/                      records from `python -m src.strategies.run ... --validation-start`
+results/confirmations/, results/final_test_log.jsonl   cross-asset checks and final-test uses (src.research.confirm)
 ```
 
 Every research run is kept in `data/research_runs/` (git-ignored): this history is the LoRA training data and the baseline for comparing base vs LoRA. `python -m src.research.runs` summarises all runs: efficiency, research quality, diversity and mistakes per run and per model.

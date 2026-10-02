@@ -5,7 +5,7 @@ conditions (buy-and-hold: always long; flat: always in cash). They run through t
 backend, costs and periods as the candidates, so the comparison is like-for-like.
 
 Used by: research/experiment.py (benchmarks on the same periods and costs as every experiment),
-         agents/research.py, strategies/run.py and research/confirm.py (load_benchmarks).
+         agents/research.py and research/confirm.py (load_benchmarks).
 """
 
 from __future__ import annotations

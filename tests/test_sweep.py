@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.strategies.schema import SpecError, StrategySpec
-from src.strategies.sweep import count_candidates, generate_candidates, parameter_grid, run_sweep, summarize_sweep
+from src.strategies.sweep import count_candidates, evaluate_candidates, generate_candidates, parameter_grid, summarize_sweep
 
 BASE = StrategySpec.from_dict({
     "name": "mom_lowvol",
@@ -56,8 +56,8 @@ def test_candidate_limit_and_invalid_values() -> None:
 
 def test_sweep_results_are_deterministic_and_complete() -> None:
     data = make_data()
-    first = run_sweep(data, BASE, SPACE, cost_bps=10, dataset="SYN")
-    second = run_sweep(data, BASE, SPACE, cost_bps=10, dataset="SYN")
+    first = evaluate_candidates(data, generate_candidates(BASE, SPACE), cost_bps=10, dataset="SYN")
+    second = evaluate_candidates(data, generate_candidates(BASE, SPACE), cost_bps=10, dataset="SYN")
     pd.testing.assert_frame_equal(first, second)
     assert len(first) == 12 and first["candidate"].tolist() == list(range(12))
     assert set(SPACE) <= set(first.columns) and {"sharpe", "max_drawdown", "turnover", "n_trades"} <= set(first.columns)
@@ -68,14 +68,14 @@ def test_sweep_row_matches_single_evaluation() -> None:
     from src.strategies.evaluator import evaluate_strategy
 
     data = make_data()
-    results = run_sweep(data, BASE, SPACE, cost_bps=10)
+    results = evaluate_candidates(data, generate_candidates(BASE, SPACE), cost_bps=10)
     params, spec = generate_candidates(BASE, SPACE)[5]
     direct = evaluate_strategy(data, spec, cost_bps=10).metrics
     assert results.loc[5, "sharpe"] == pytest.approx(direct["sharpe"])
 
 
 def test_summary_is_compact() -> None:
-    results = run_sweep(make_data(), BASE, SPACE, cost_bps=10)
+    results = evaluate_candidates(make_data(), generate_candidates(BASE, SPACE), cost_bps=10)
     summary = summarize_sweep(results, top=3)
     assert summary["n_candidates"] == 12 and len(summary["top"]) == 3
     assert set(summary["parameter_sensitivity"]) == set(SPACE)

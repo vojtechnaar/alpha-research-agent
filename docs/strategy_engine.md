@@ -72,7 +72,7 @@ Specs, sweeps, the CLI and the LLM prompt pick it up without other changes. The 
 
 `volatility(close, L)` is the sample standard deviation of hourly simple returns over the last L bars. It is **not** annualised: multiply by √8760 ≈ 93.6 for an annualised figure. For crypto, 40–110% annualised volatility is about 0.004–0.012 per hour.
 
-That's why the first sweep's volatility thresholds (0.01, 0.02, 0.03) barely mattered: hourly volatility is rarely above 0.02, so a `< 0.02` filter almost never binds. `configs/sweeps/momentum_low_volatility_extended.json` uses `[0.004, 0.006, 0.008, 0.012]` instead, and longer momentum lookbacks (24–336 h), giving 600 candidates.
+That's why the first sweep's volatility thresholds (0.01, 0.02, 0.03) barely mattered: hourly volatility is rarely above 0.02, so a `< 0.02` filter almost never binds. Thresholds around `[0.004, 0.006, 0.008, 0.012]` are the sensible range, which is why the prompt now shows Qwen each feature's typical values.
 
 Check the actual distribution on your data before trusting any threshold:
 
@@ -112,12 +112,13 @@ Annualisation uses `periods_per_year`, which defaults to 8,760 for hourly bars t
 ```python
 space = {"momentum.lookback": [6, 12, 24, 48, 72], "momentum.threshold": [0.005, 0.01, 0.015, 0.02, 0.03],
          "volatility.lookback": [6, 12, 24, 48], "volatility.threshold": [0.01, 0.02, 0.03]}
-results = run_sweep(data, base_spec, space, cost_bps=10, start="2017-01-01", end="2023-01-01", dataset="BTC/USD")
+candidates = generate_candidates(base_spec, space)
+results = evaluate_candidates(data, candidates, cost_bps=10, start="2017-01-01", end="2023-01-01", dataset="BTC/USD")
 summary = summarize_sweep(results)
 ```
 
 - **`generate_candidates`:** builds the full Cartesian product (300 candidates here) in a fixed order and validates every candidate before anything runs. It refuses spaces larger than `max_candidates`.
-- **`run_sweep`:** returns one row per candidate with `candidate`, `dataset`, `start`, `end`, one column per swept parameter, and all the metrics.
+- **`evaluate_candidates`:** returns one row per candidate with `candidate`, `dataset`, `start`, `end`, one column per swept parameter, and all the metrics.
 - **Feature cache:** momentum(close, 24) is computed once and reused for all 5 × 4 × 3 = 60 candidates that use it.
 
 ## Train/validation experiments
@@ -131,14 +132,7 @@ summary = summarize_sweep(results)
 
 Data at or after the validation end is dropped before anything runs.
 
-From the command line (`--transaction-cost` is a fraction per unit of position change; the default is 0.001 = 10 bps):
-
-```bash
-python -m src.strategies.run configs/strategies/momentum_low_volatility.json \
-    --data data/raw/bitstamp_BTC-USD_1h.parquet --space configs/sweeps/momentum_low_volatility_extended.json \
-    --train-start 2017-01-01 --train-end 2023-01-01 --validation-start 2023-01-01 --validation-end 2025-01-01 \
-    --top 10 --transaction-cost 0.001
-```
+From the command line it runs inside the research loop (`python -m src.agents.research`), once per hypothesis; `--transaction-cost` is a fraction per unit of position change (default 0.001 = 10 bps).
 
 This prints the report and appends an experiment record to `results/experiments/manual/experiments.jsonl`. Without `--validation-*` you get the older train-only sweep. Without `--space` you get a single strategy compared with the benchmarks over the same period.
 
