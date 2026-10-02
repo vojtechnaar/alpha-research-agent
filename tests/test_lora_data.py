@@ -119,3 +119,18 @@ def test_cli_writes_train_and_val(tmp_path: Path, capsys: pytest.CaptureFixture)
     val = (tmp_path / "lora" / "val.jsonl").read_text().splitlines()
     assert len(train) + len(val) == 6
     assert "Examples: 6 kept" in capsys.readouterr().out
+
+
+def test_best_ranks_useful_experiments_one_per_family(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    from src.research.best import main as best_main, ranked_experiments
+
+    short = {**LONG, "true_position": -1}
+    runs = tmp_path / "runs"
+    write_run(runs, "20260101-000000", [record(median=0.8), record(median=1.5),          # same family: best kept
+                                        record(median=1.0, spec=short, hypothesis="h"),  # another family
+                                        record(median=2.0, exposure=0.99)])              # not useful: skipped
+    table = ranked_experiments(runs)
+    assert table["validation_median"].tolist() == [1.5, 1.0]
+    assert table.loc[0, "experiment"] == 1 and table.loc[0, "records"].endswith("experiments.jsonl")
+    assert best_main(["--runs-dir", str(runs), "--top", "1"]) == 0
+    assert "--experiments 1 --final-test" in capsys.readouterr().out

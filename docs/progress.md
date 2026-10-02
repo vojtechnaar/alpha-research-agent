@@ -25,6 +25,12 @@ What had to be fixed along the way, and how. The design itself is in [architectu
   - idea families per run: 7.1 → 7.0 (no loss of diversity)
 
   **Verdict: not proven.** LoRA was better in 17 of 30 pairs, with a mean difference of +0.39 useful experiments per 10 calls, but the 95% bootstrap CI (−0.43 to +1.19) includes 0. It learned the mechanics (format, corrections) but not to stop repeating ideas, the biggest waste for both models. The first 10 pairs looked better (+0.63, 7 of 10): small samples overstate effects, which is why the decision rule and the number of seeds were fixed in advance.
+- **LoRA v2 vs base Qwen** (trained on 479 examples, 3× v1; validation loss 0.429 → 0.063, best at epoch 2; the same 30 pairs, evaluated as fixed in advance):
+  - better in 15 of 30 pairs; mean difference **+0.28** useful experiments per 10 calls, 95% bootstrap CI (−0.46 to +1.02)
+  - GLD +0.92 (9 of 15 better), ETH −0.36 (6 of 15)
+  - rejected repeats: 138 vs 149 for base (still about a third of LLM calls)
+
+  **Verdict: no improvement**, below the +0.5 fixed in advance. Three times more data lowered the imitation loss but did not make Qwen a better researcher: supervised fine-tuning teaches the *style* of good proposals, not how to find new ones or to stop repeating. Both adapters help on daily GLD and hurt on hourly ETH, matching the training data (80% daily markets).
 
 ## Problems and fixes
 
@@ -108,6 +114,12 @@ What had to be fixed along the way, and how. The design itself is in [architectu
     → The log only reports the GPU the process uses. That wasn't the only cause: loading the LoRA adapter still opened contexts on every GPU and put the adapter on GPU 0. So runs now make only their own GPU visible (`CUDA_VISIBLE_DEVICES`), which `scripts/compare_lora.sh` does automatically.
 38. **Base vs LoRA was judged by eye from a long table,** with rejection codes mixed across models.
     → `python -m src.research.runs` pairs runs by market and seed and prints wins, the mean difference and a bootstrap 95% CI, plus rejection codes per model.
+
+## Final test: fixed before looking
+
+- **Which ideas:** for each training market (BTC/USD, SPY, QQQ, TLT), the single best *useful* experiment (no unit problems) by validation median Sharpe, one per idea family (`python -m src.research.best --top 1`). Chosen from train and validation results only.
+- **Test periods:** everything after each experiment's validation end, which the research loop never loaded: BTC from 2025-01-01, stocks and bonds from 2023-01-01, until the end of the downloaded data.
+- **What counts:** the idea *holds up* if the frozen top 10's median Sharpe on the test period is above 0; it *beats buy-and-hold* only if that median is above buy-and-hold's Sharpe on the same period. Each test is run once (`results/final_test_log.jsonl`), and the result is reported whatever it shows. Expect it to be lower than validation: the best of hundreds of experiments is inflated by selection.
 
 ## Still open
 
