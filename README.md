@@ -1,15 +1,61 @@
 # Alpha Research Agent
 
-An automated quantitative crypto research system:
-- **Qwen3-8B is the researcher.** It proposes a hypothesis, a validated JSON strategy spec and a parameter space.
-- **A numerical engine runs the experiment.** It backtests every combination on a training period, retests the frozen best few on a validation period, and compares them with benchmarks. It runs in Python, C++ or CUDA.
-- **A compact summary goes back to Qwen** for the next hypothesis, within a strict iteration limit.
+An automated quantitative research system in which a local LLM acts as the researcher and a GPU
+backtester tests its ideas, built end to end and evaluated with an emphasis on avoiding false
+discoveries.
+
+```
+Qwen3-8B (+ LoRA) ──► hypothesis + strategy as validated JSON + parameter ranges
+       ▲                                  │
+       │                    CUDA engine: up to 20,000 variants on TRAIN
+       │                                  │
+ compact feedback ◄── frozen top 10 retested on VALIDATION, vs benchmarks, overfitting warnings
+```
+
+## What was built
+
+- **LLM researcher with a safe strategy language.** Qwen3-8B proposes one hypothesis at a time as JSON
+  over a whitelist of 12 features and 4 operators. Nothing it writes is executed; every reply is
+  validated, and errors go back to the model as precise, machine-readable feedback.
+- **Bounded research loop.** Hard limits on iterations and retries, duplicate and near-duplicate detection
+  (canonical strategy identities, "idea families"), higher sampling temperature after repeats, and a
+  compact feedback message with costs, condition activity and untried ideas.
+- **Research methodology against overfitting.** Parameter sweeps on a train period, the best 10 frozen and
+  retested on a separate validation period, like-for-like benchmarks (buy-and-hold, cash, naive momentum),
+  minimum-trade filters, overfitting warnings, held-out markets, and a final test period that the loop
+  never loads, used once per idea.
+- **C++/CUDA backtester, 635× faster than Python.** One GPU thread per strategy variant, the same
+  results as the pandas reference engine (max difference 1.8e-12, parity-tested). A hypothesis is
+  tested in about a second, so the bottleneck moved from computation to the LLM.
+- **Multi-asset data.** Hourly crypto (BTC, ETH) and daily stocks, bonds, gold and FX, in one format.
+- **LoRA fine-tuning pipeline.** About 1,900 research experiments collected, filtered into ~480
+  good research steps, and used to fine-tune Qwen3-8B with LoRA (loss on the proposal only, memory-efficient
+  for 8k-token prompts).
+- **Pre-registered evaluation of the researcher itself.** Base vs fine-tuned models compared on held-out
+  markets in 30 paired runs, with the primary metric, minimum effect and decision rule fixed in advance,
+  reported with bootstrap confidence intervals.
+- **About 4,700 lines of Python and CUDA, ~170 offline tests.**
+
+## What the project showed
+
+- **Engineering made the LLM a usable researcher:** first-try valid proposals went from 0% to about 60–70%,
+  useful experiments per 10 LLM calls from 0 to about 2.5–3, and idea diversity per run from 1–3 to 7–8 families.
+- **Fine-tuning improved the mechanics, not the judgement:** LoRA reduced format and unit mistakes, but its
+  gain in useful ideas per LLM call was small and not statistically significant, even with 3× more data.
+  Imitating good past proposals doesn't teach a model to find new ones or to stop repeating itself.
+- **The selection bias is real:** the best of hundreds of experiments looks much better on validation than
+  on untouched data, which is exactly what the frozen retests and the one-time final test are there to expose.
+
+**What it would take to find market-beating strategies:** a stronger (larger) LLM with better research
+judgement; preference training (e.g. DPO) against repeated and failed ideas; much more and richer data
+(lower timeframes such as minute bars, order-book and alternative data, more assets and longer histories);
+and formal statistics for multiple testing (deflated Sharpe ratio, walk-forward validation).
+
+## Documentation
 
 - [docs/architecture.md](docs/architecture.md): the pipeline, the research loop, the splits, records and design decisions.
 - [docs/strategy_engine.md](docs/strategy_engine.md): the spec format, features, operators, experiments, the backend interface and the CUDA mapping.
-- [docs/progress.md](docs/progress.md): what had to be fixed and how, what the experiments showed, open issues and the LoRA plan.
-
-**Current milestone:** LoRA adapter v1 is trained on 164 good research steps; base vs LoRA is being compared on the held-out markets ETH and GLD.
+- [docs/progress.md](docs/progress.md): every problem found and how it was fixed, the measurements, and the open issues.
 
 | Path | What it does |
 |---|---|

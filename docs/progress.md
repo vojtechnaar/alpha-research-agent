@@ -121,6 +121,17 @@ What had to be fixed along the way, and how. The design itself is in [architectu
 - **Test periods:** everything after each experiment's validation end, which the research loop never loaded: BTC from 2025-01-01, stocks and bonds from 2023-01-01, until the end of the downloaded data.
 - **What counts:** the idea *holds up* if the frozen top 10's median Sharpe on the test period is above 0; it *beats buy-and-hold* only if that median is above buy-and-hold's Sharpe on the same period. Each test is run once (`results/final_test_log.jsonl`), and the result is reported whatever it shows. Expect it to be lower than validation: the best of hundreds of experiments is inflated by selection.
 
+**Final-test results** (run once each; frozen top 10, median Sharpe):
+
+| Market | Idea | Validation | Final test | Buy-and-hold (test) | Holds up | Beats B&H |
+|---|---|---|---|---|---|---|
+| BTC/USD (2025-01 → 2026-09) | long if distance_to_min > x AND volatility < x | 1.91 | **−0.49** | 0.06 | no | no |
+| QQQ (2023-01 → 2026-09) | long if volatility > x AND distance_to_min < x | 1.06 | **1.69** | 1.51 | yes | **yes** |
+| SPY (2023-01 → 2026-09) | long if volatility > x AND distance_to_min < x | 0.97 | **0.73** | 1.42 | yes | no |
+| TLT (2023-01 → 2026-09) | long if volatility < x AND momentum > x | 1.02 | **−0.51** | −0.15 | no | no |
+
+2 of 4 held up and 1 of 4 beat buy-and-hold. BTC and TLT decayed completely (all 10 variants negative): the best of hundreds of experiments was mostly selection luck, as expected. The surviving idea is the same on both equity indices: **buy near the recent low when volatility is high** (all 10 variants positive on QQQ and SPY over 3.7 unseen years). QQQ and SPY are highly correlated, so this is closer to one piece of evidence than two.
+
 ## Still open
 
 - **The comparison ran with a 1,000-candidate budget** (`scripts/compare_lora.sh`), while the training data was collected with 20,000. That's the same for both models, so the comparison is fair, but LoRA saw a slightly different prompt than in training. Keep 1,000 for comparisons with the existing 30 base runs, or rerun base when changing it.
